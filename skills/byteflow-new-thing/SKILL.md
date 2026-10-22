@@ -1,6 +1,6 @@
 ---
 name: byteflow-new-thing
-description: Start any new feature or task the ByteFlow way - grill the user until Task, Guardrails and Definition of Done are nailed down, swap plain-language explanations for leading words, build deterministic pass/fail scripts, keep CLAUDE.md a lean index, record a phased plan in ./docs, then hand the user an exact /goal line and implement until the scripted checks pass.
+description: Start any new feature or task the ByteFlow way - grill the user until Task, Guardrails and Definition of Done are nailed down, swap plain-language explanations for leading words, build deterministic pass/fail scripts, keep CLAUDE.md a lean index, record a phased plan in ./docs, then implement until the scripted checks pass.
 argument-hint: "<what you want to build or do>"
 disable-model-invocation: true
 ---
@@ -12,7 +12,7 @@ Request: $ARGUMENTS
 Follow the steps in order. Never skip an approval gate. The user's choice is final once they say they want to keep it.
 
 Bundled files (use them, don't rewrite them):
-- `${CLAUDE_SKILL_DIR}/scripts/check-env.(ps1|sh)` - OS, shells, whether hooks (and so `/goal`) are disabled
+- `${CLAUDE_SKILL_DIR}/scripts/check-env.(ps1|sh)` - OS, shells, which script language to use
 - `${CLAUDE_SKILL_DIR}/scripts/check-claudemd.(ps1|sh) [path]` - CLAUDE.md size + required sections
 - `${CLAUDE_SKILL_DIR}/scripts/check-plan.(ps1|sh) <plan.md>` - unchecked slices, next slice, Decisions present
 - `${CLAUDE_SKILL_DIR}/templates/` - `implementation.md`, `CLAUDE.md`, `verify-done.ps1`, `verify-done.sh`
@@ -28,8 +28,8 @@ Generated files live in the project root:
 
 ## Step 0 - Preflight
 
-1. Run `check-env`. Note the OS and the shell to write scripts in. If it reports hooks disabled, warn the user now that `/goal` will not work and the plan will run without it.
-2. Look for `./docs/*-implementation.md`. If one matches this request, run `check-plan` on it and offer: **resume** at the first unchecked slice (skip to Step 8) or **start fresh**.
+1. Run `check-env`. Note the OS and the shell to write scripts in.
+2. Look for `./docs/*-implementation.md`. If one matches this request, run `check-plan` on it and offer: **resume** at the first unchecked slice (skip to Step 6) or **start fresh**.
 
 ## Step 1 - Grill (Tenet 1)
 
@@ -63,7 +63,7 @@ Show the findings as a table:
 Rules:
 - Only map terms you are confident are standard. If unsure, say so in the "Why" column.
 - If a term changes meaning (it implies more or less than the user said), flag it instead of silently swapping.
-- After the user confirms or vetoes each row, use the confirmed leading words, not the long explanations, everywhere from now on: the Decisions in the plan, the `/goal` line, CLAUDE.md, script names and comments.
+- After the user confirms or vetoes each row, use the confirmed leading words, not the long explanations, everywhere from now on: the Decisions in the plan, CLAUDE.md, script names and comments.
 - Record confirmed rows in the plan's **Leading words** section.
 
 Then show a one-screen summary of Task / Guardrails / DoD (scripted + manual) in leading-word form and get approval.
@@ -99,30 +99,13 @@ Rules: keep it under 200 lines; no code walkthroughs, no history, nothing Claude
 2. Build the approved scripts in `./docs/verify/`. Start `verify-done` from `templates/verify-done.(ps1|sh)` - one check per Scripted DoD item and checkable Guardrail.
 3. Run `verify-done` once now. It should FAIL on the unfinished work. A check that already passes before any work is done proves nothing: fix or explain it.
 
-## Step 6 - Propose the /goal (Tenet 3)
-
-`/goal` is a built-in command the **user** types; you cannot set it. After each turn a small model judges the condition from the conversation, so the turn limit is a soft instruction, not a hard cap. Anchor the goal to the script's exit code.
-
-Write one line that has all four parts:
-1. **One explicit end state.**
-2. **Proof** - the exact command and that its PASS output is shown in chat.
-3. **What must not change** - the Guardrails, in leading words.
-4. **A turn limit** - and what to do when it is hit (stop and report blockers).
-
-Format:
-```
-/goal <end state>; proven by `<verify-done command>` exiting 0 with its PASS lines shown in chat; <guardrails> unchanged; if manual DoD items remain, stop and ask the user; stop after <N> turns and report what is blocking.
-```
-
-Show the line, explain each part in one sentence, **get approval**, then tell the user to paste it. Remind them: `/goal` with no argument shows status, `/goal clear` stops it.
-
-## Step 7 - Implement
+## Step 6 - Implement
 
 - Work slice by slice in plan order. Tick `- [x]` in the plan as each slice is finished and checked, never before.
 - After each phase: run `check-plan`, then decide whether CLAUDE.md needs new entries or pruning (stale tools, workflows no longer used, gotchas that no longer apply). Propose changes; run `check-claudemd` after any edit.
 - Respect Guardrails at every step. If a slice would break one, stop and ask.
 - Use the Step 3 helper scripts instead of repeating the work by hand.
 
-## Step 8 - Done
+## Step 7 - Done
 
 Done means: `verify-done` exits 0 with output shown in chat, `check-plan` reports 0 unchecked slices, and the user has confirmed every manual DoD item. Report in a few lines: what was built, the passing output, open risks, and any CLAUDE.md changes made.

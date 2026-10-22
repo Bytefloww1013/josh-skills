@@ -20,12 +20,6 @@ Status: in progress | Started: <YYYY-MM-DD>
 |---|---|
 | <quote> | <term> |
 
-## Goal
-
-```
-/goal <approved goal line>
-```
-
 ## Phase 1 - <name>
 
 - [ ] 1.1 <slice>
