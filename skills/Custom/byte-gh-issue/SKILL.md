@@ -61,7 +61,9 @@ Markdown, in this order. Concise: enough to work from, nothing padded. Skip fill
 
 ## Step 4 - Labels
 
-Pick the labels from Step 1 that clearly fit (type, area, priority). Never create labels. If none fit, use none.
+Every issue gets exactly one of `one-way-door` (hard to walk back once done, such as a schema or data migration, a public API or a deletion) or `two-way-door` (easy to undo). If the repo has neither label, stop and tell the user.
+
+Add any other labels from Step 1 that clearly fit (type, area, priority). Never create labels.
 
 ## Step 5 - Create
 
