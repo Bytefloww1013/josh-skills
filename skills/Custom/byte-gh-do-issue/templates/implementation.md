@@ -1,6 +1,6 @@
 # Issue #<N> - <issue title> - Implementation
 
-Status: in progress | Started: <YYYY-MM-DD> | Branch: `<tag>/issue<N>-<slug>` | Issue: <url>
+Status: in progress | Started: <YYYY-MM-DD> | Branch: `<descriptor>/<action>-issue<N>-<description>` | Issue: <url>
 
 ## Decisions
 
