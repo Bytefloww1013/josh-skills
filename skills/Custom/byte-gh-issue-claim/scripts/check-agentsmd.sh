@@ -4,13 +4,13 @@
 path=$1; n=$2; mode=${3:-active}; max=${4:-200}; failed=0
 [ -n "$path" ] && [ -n "$n" ] || { echo "FAIL: usage: check-agentsmd.sh <file> <issue#> [active|clean]"; exit 1; }
 [ -f "$path" ] || { echo "FAIL: $path not found"; exit 1; }
-start="<!-- byte-gh-do-issue #$n START -->"; end="<!-- byte-gh-do-issue #$n END -->"
+start="<!-- byte-gh-issue-claim #$n START -->"; end="<!-- byte-gh-issue-claim #$n END -->"
 
 lines=$(wc -l < "$path" | tr -d ' ')
 if [ "$lines" -le "$max" ]; then echo "PASS: $lines lines (<= $max)"; else echo "WARN: $lines lines (> $max) - prune it"; fi
 
 if [ "$mode" = clean ]; then
-  if grep -Fq "byte-gh-do-issue #$n " "$path"; then echo "FAIL: issue #$n markers still present"; failed=1; else echo "PASS: no issue #$n markers"; fi
+  if grep -Fq "byte-gh-issue-claim #$n " "$path"; then echo "FAIL: issue #$n markers still present"; failed=1; else echo "PASS: no issue #$n markers"; fi
   if grep -Eq "^#+[[:space:]]*Issue #$n([^0-9]|$)" "$path"; then echo "FAIL: 'Issue #$n' heading still present"; failed=1; else echo "PASS: no 'Issue #$n' heading"; fi
   exit $failed
 fi

@@ -6,13 +6,13 @@ param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][int]$Issue,
 $failed = 0
 if (-not (Test-Path -LiteralPath $Path)) { Write-Output "FAIL: $Path not found"; exit 1 }
 $lines = @(Get-Content -LiteralPath $Path)
-$start = "<!-- byte-gh-do-issue #$Issue START -->"; $end = "<!-- byte-gh-do-issue #$Issue END -->"
+$start = "<!-- byte-gh-issue-claim #$Issue START -->"; $end = "<!-- byte-gh-issue-claim #$Issue END -->"
 
 if ($lines.Count -le $MaxLines) { Write-Output "PASS: $($lines.Count) lines (<= $MaxLines)" }
 else { Write-Output "WARN: $($lines.Count) lines (> $MaxLines) - prune it" }
 
 if ($Mode -eq 'clean') {
-    if ($lines | Where-Object { $_.Contains("byte-gh-do-issue #$Issue ") }) { Write-Output "FAIL: issue #$Issue markers still present"; $failed++ }
+    if ($lines | Where-Object { $_.Contains("byte-gh-issue-claim #$Issue ") }) { Write-Output "FAIL: issue #$Issue markers still present"; $failed++ }
     else { Write-Output "PASS: no issue #$Issue markers" }
     if ($lines -match "^#+\s*Issue #$Issue(\D|$)") { Write-Output "FAIL: 'Issue #$Issue' heading still present"; $failed++ }
     else { Write-Output "PASS: no 'Issue #$Issue' heading" }

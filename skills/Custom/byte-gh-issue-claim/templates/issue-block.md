@@ -1,4 +1,4 @@
-<!-- byte-gh-do-issue #<N> START -->
+<!-- byte-gh-issue-claim #<N> START -->
 ## Issue #<N> (branch `<branch>` only - removed before the PR)
 
 ### Tools
@@ -16,4 +16,4 @@
 
 ### Gotchas
 - <trap> -> <correct behaviour>
-<!-- byte-gh-do-issue #<N> END -->
+<!-- byte-gh-issue-claim #<N> END -->

@@ -22,7 +22,7 @@ If the request is too vague to fill Why and Requirements, ask one short question
 
 `[TYPE] <Action> <specific what and where>`
 
-`/byte-gh-do-issue` names the branch from the title (`<type>/<action>-issue<N>-<2-3 words>`), so TYPE and Action come only from these lists. If the repo documents its own branch descriptors and actions (a git or PR directive), use its lists instead.
+`/byte-gh-issue-claim` names the branch from the title (`<type>/<action>-issue<N>-<2-3 words>`), so TYPE and Action come only from these lists. If the repo documents its own branch descriptors and actions (a git or PR directive), use its lists instead.
 
 - TYPE, in brackets and all caps, one of: FEATURE (new behaviour), BUG (something broken, including a performance or security fault), REFACTOR (same behaviour, better code), DOC (docs only), CHORE (tooling, dependencies, upkeep), TEST (tests only), CI (pipelines). Research or a spike takes the type of the change it is for.
 - Starts with one of these verbs: Add, Build, Change, Delete, Fix, Install, Move, Remove, Rename, Update, Upgrade
