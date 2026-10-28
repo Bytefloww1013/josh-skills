@@ -1,6 +1,6 @@
 ---
 name: byte-gh-issue-claim
-description: Work a GitHub issue end to end the ByteFlow way - branch from the issue title, answer the grilling questions from the issue and ask only for the gaps, write a phased checkbox plan, keep issue notes in CLAUDE.md/AGENTS.md, fan out file-owning subagents, commit per phase with Conventional Commits on the issue's branch only, verify with tests/smokes/CI checks and an agent-run visual check, clean up, then squash and open a PR only with the user's permission. --verify has the user confirm the manual checks; --auto hands every choice to a Decision subagent and opens the PR unattended.
+description: Work a GitHub issue end to end the ByteFlow way - branch from the issue title, answer the grilling questions from the issue and ask only for the gaps, write a phased checkbox plan, keep issue notes in CLAUDE.md/AGENTS.md, fan out file-owning subagents, commit per phase with Conventional Commits on the issue's branch only, verify with tests/smokes/CI checks and an agent-run visual check, clean up, then squash and open a PR, merge it only when the user says to, and delete the local branch once merged. --verify has the user confirm the manual checks; --auto hands every choice to a Decision subagent.
 argument-hint: "<issue number or URL> [--verify] [--auto]"
 disable-model-invocation: true
 ---
@@ -136,7 +136,7 @@ At the end of each phase:
 1. Run the phase's tests. Do not commit a red phase.
 2. Stage only the phase's files by path (never the plan file).
 3. Run the branch guard. Commit with a Conventional Commits subject: `<type>(<scope>): <subject> (#<N>)` - `<scope>` the module or area the phase touches (lower case, or leave `(<scope>)` out), `<subject>` what the phase does in lower-case imperative words, no trailing period. Example: `feat(maintenance): add the dispatched_to column and migration (#24)`.
-4. Push (`git push -u origin <branch>`, after the branch guard) only when the user has said to push this branch; `--auto` is that say-so. Otherwise **gate** once after the first phase commit: push this branch? With no say-so, keep the commits local.
+4. Run the branch guard, then push: `git push -u origin <branch>`.
 5. Run `check-plan`, then review the issue block: add, prune, or leave it.
 
 ## Step 7 - Verify
@@ -145,7 +145,7 @@ Run everything that proves the issue is fixed, and show the output in chat:
 - The tests and smokes listed in the issue block, then the full suite if it runs in reasonable time.
 - What CI runs: read `.github/workflows/*` and run the same lint, type-check, build and test commands locally.
 - Each acceptance criterion from the issue, and the reproduction steps for a bug (now passing).
-- If the branch is pushed: `gh run list --branch <branch> --limit 3` for the phase commits; any failure gets fixed before moving on. Under `--auto`, wait for the last run (`gh run watch <id> --exit-status`).
+- `gh run list --branch <branch> --limit 3` for the phase commits; any failure gets fixed before moving on. Under `--auto`, wait for the last run (`gh run watch <id> --exit-status`).
 - Each Manual DoD item: the visual check (see Flags), or with `--verify` ask the user to confirm it.
 
 Any failure: fix it in a new slice, commit it as its own phase, re-run Step 7.
@@ -154,16 +154,16 @@ Any failure: fix it in a new slice, commit it as its own phase, re-run Step 7.
 
 1. **Gate**: keep any lasting item from the issue block (e.g. a test command that was missing) by moving it into the file's permanent sections. Move only what is approved.
 2. Delete the issue block, markers included. Run `check-agentsmd <file> <N> clean`.
-3. Run the branch guard. Commit `chore: remove the issue notes (#<N>)`, and push if the branch is pushed. If the issue block was the only content of a file you created in Step 4, delete the file instead.
+3. Run the branch guard. Commit `chore: remove the issue notes (#<N>)`, and push. If the issue block was the only content of a file you created in Step 4, delete the file instead.
 
-## Step 9 - PR (permission required)
+## Step 9 - PR
 
-Done means: every Step 7 check passed (CI included), `check-plan` reports 0 unchecked slices, `check-agentsmd ... clean` passes, and every Manual item passed its visual check (or the user confirmed it, with `--verify`). Report that in a few lines, then **ask for permission to create the PR**. Under `--auto`, Done is the permission: open it without asking. No permission: stop here; the phase commits stay as they are.
+Done means: every Step 7 check passed (CI included), `check-plan` reports 0 unchecked slices, `check-agentsmd ... clean` passes, and every Manual item passed its visual check (or the user confirmed it, with `--verify`). Report that in a few lines, then open the PR without asking. Not Done: stop here and say what is missing.
 
-With permission:
 1. `git fetch origin`. If `<base>` moved, `git rebase origin/<base>` and re-run the Step 7 tests.
 2. Squash: `git reset --soft $(git merge-base HEAD origin/<base>)`, then run the branch guard and make one commit:
    `<type>(<scope>): <subject>` - the issue title without the bracket tag, its first word lowercased, no issue number (a squash merge adds the PR number) - with a body of 3-6 bullets summarising the change, and `Closes #<N>`. Example: `feat(maintenance): allow free-text vendors in the "Dispatched to" field`.
 3. Run the branch guard, then `git push --force-with-lease -u origin <branch>` (force is required when the phase commits were already pushed; never force without the lease, never any branch but `<branch>`).
 4. `gh pr create --base <base> --head <branch> --title "<commit subject>" --body "<summary, test evidence, Closes #<N>>"`. Under `--auto`, the body also lists each Auto decision in one line.
 5. Report the PR URL and `gh pr checks <pr>` status. **Gate**: delete the local plan file?
+6. Merge only when the user says to; a Decision subagent never stands in for that, even under `--auto`. Once the PR is merged: `git switch <base>`, `git pull`, then `git branch -D <branch>` (`-D`, because a squash merge leaves the branch's commits off `<base>`).
