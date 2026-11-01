@@ -1,13 +1,15 @@
 ---
 name: byte-gh-issue
 description: Create a GitHub issue in the current repo with the gh CLI - a typed, verb-first title, a concise Markdown body (Why, Requirements, Changes, General Steps, Definition of Done, References) and fitting existing labels.
-argument-hint: "<what the issue is about>"
+argument-hint: "[--grill] <what the issue is about>"
 disable-model-invocation: true
 ---
 
 # /byte-gh-issue
 
 Request: $ARGUMENTS
+
+If the request starts with `--grill`, strip the flag and run Step 1b after Step 1; without it, skip Step 1b.
 
 ## Step 1 - Preflight
 
@@ -17,6 +19,20 @@ Run these from the current directory. Stop and tell the user if any fails; never
 - `gh label list --limit 200 --json name,description` - the only labels you may use
 
 If the request is too vague to fill Why and Requirements, ask one short question first. Read relevant code or docs in the repo only when it makes the issue more accurate.
+
+## Step 1b - Grill (`--grill` only)
+
+Grill the user until the request is one narrow issue: a single problem, a clear in/out scope, the area of the code it touches, and an observable Definition of Done. The step is complete when every section of Step 3's body can be written from the user's answers alone, with no guess left.
+
+1. Read the code, docs and ADRs the request touches (`codegraph_explore` where `.codegraph/` exists). Write the open questions: one decision each, broadest first (what problem, then scope, then area, then behaviour, then done).
+2. Spawn the **Decider**: a fresh `general-purpose` agent (never `fork`), description `Decider`, so its context is clean. Its prompt holds only the user's request as written, the question, and the context you gathered for that question (file paths, line ranges, doc and ADR names). Ask it for 2-4 answers, one marked recommended, each recommendation backed by proof: a `path:line` or a quoted doc/ADR line it read. An answer without proof is listed as unbacked and is never the recommendation. Send each later question to the same Decider (`SendMessage`), or spawn a new one given the earlier questions and answers.
+3. Open each cited `path:line` and keep only the proof that says what the Decider claims.
+4. Ask one question at a time, in chat: the question, then the answers as a numbered list, the recommended one first with `(Recommended)` and its proof. The user picks a number or writes their own answer. End the turn and wait.
+5. Accept the answer, or push back with the proof. Each question gets at most two pushbacks:
+   - First: the answer conflicts with the code, a doc or the architecture.
+   - Second: only for a **one-way door**: the answer risks irreversible harm (data loss, production), changes the architecture (module boundaries, the kernel, a schema), or makes the issue `one-way-door`. Name which.
+   - After that, or when the user holds their answer, the user's answer is final. A one-way-door answer kept after the second pushback gives the issue `one-way-door` in Step 4.
+6. Once complete, post the interpretation in 2-4 lines and go on to Step 2 when the user says yes.
 
 ## Step 2 - Title
 
