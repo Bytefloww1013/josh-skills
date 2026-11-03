@@ -1,6 +1,6 @@
 ---
 name: byte-gh-issue-claim
-description: Work a GitHub issue end to end the ByteFlow way - branch from the issue title, answer the grilling questions from the issue and ask only for the gaps, write a phased checkbox plan, keep issue notes in CLAUDE.md/AGENTS.md, fan out file-owning subagents, commit per phase with Conventional Commits on the issue's branch only, verify with tests/smokes/CI checks and an agent-run visual check, clean up, then squash and open a PR, merge it only when the user says to, and delete the local branch once merged. --verify has the user confirm the manual checks; --auto hands every choice to a Decision subagent.
+description: Work a GitHub issue end to end the ByteFlow way - branch from the issue title, answer the grilling questions from the issue and ask only for the gaps, write a phased checkbox plan, keep issue notes in CLAUDE.md/AGENTS.md, fan out file-owning subagents, commit per phase with Conventional Commits on the issue's branch only, verify with tests/smokes/CI checks and an agent-run visual check, clean up, then squash and open a PR once the user says to (--auto is that say-so), merge it only when the user says to, and delete the local branch once merged. --verify has the user confirm the manual checks; --auto hands every choice to a Decision subagent.
 argument-hint: "<issue number or URL> [--verify] [--auto]"
 disable-model-invocation: true
 ---
@@ -158,7 +158,7 @@ Any failure: fix it in a new slice, commit it as its own phase, re-run Step 7.
 
 ## Step 9 - PR
 
-Done means: every Step 7 check passed (CI included), `check-plan` reports 0 unchecked slices, `check-agentsmd ... clean` passes, and every Manual item passed its visual check (or the user confirmed it, with `--verify`). Report that in a few lines, then open the PR without asking. Not Done: stop here and say what is missing.
+Done means: every Step 7 check passed (CI included), `check-plan` reports 0 unchecked slices, `check-agentsmd ... clean` passes, and every Manual item passed its visual check (or the user confirmed it, with `--verify`). Report that in a few lines. Opening the PR needs the user's say-so, given case by case: without `--auto`, ask whether to open it and stop until they say yes (on a no, end the run with the branch pushed and no PR); `--auto` is that say-so for this issue's PR, so go on. Not Done: stop here and say what is missing.
 
 1. `git fetch origin`. If `<base>` moved, `git rebase origin/<base>` and re-run the Step 7 tests.
 2. Squash: `git reset --soft $(git merge-base HEAD origin/<base>)`, then run the branch guard and make one commit:
