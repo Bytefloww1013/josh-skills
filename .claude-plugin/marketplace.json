@@ -1,0 +1,14 @@
+{
+  "name": "josh-skills",
+  "owner": {
+    "name": "Bytefloww1013"
+  },
+  "description": "Bytefloww1013's Claude Code plugins. The standalone skills under skills/ install with npx skills instead.",
+  "plugins": [
+    {
+      "name": "byte-stack",
+      "source": "./plugins/byte-stack",
+      "description": "byte-mode for bphs-connect: its playbooks, the principle skills it applies under the repo's rules, its helper skills, and the byte-agent delegate subagent."
+    }
+  ]
+}

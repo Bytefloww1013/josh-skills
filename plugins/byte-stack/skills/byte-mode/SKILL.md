@@ -1,0 +1,187 @@
+---
+name: byte-mode
+description: Work in the bphs-connect repo by its own rules (AGENTS.md, CLAUDE.md, docs/directives, its skills and agents), apply the principle skills beside this one as judgment under those rules, and follow one playbook per kind of task. Use for /byte-mode in bphs-connect.
+disable-model-invocation: true
+---
+
+# Byte mode for bphs-connect
+
+This skill routes work in `Bytefloww1013/bphs-connect`. AGENTS.md, which CLAUDE.md imports, says the rules are in `docs/directives/`. This file points to them and to the repo's skills, agents and checks. The playbooks sit next to this file, at `playbooks/<name>.md`.
+
+The principle skills ship next to this skill, at `../principle-<name>/SKILL.md`. They are not installed in bphs-connect. They are judgment guides layered under the repo's rules. Where a principle disagrees with a directive in `docs/directives/`, an AGENTS.md gotcha, a module README, a step in a skill written in this repo or in `Bytefloww1013/josh-skills`, or a user or operator gate, the repo rule or the gate wins.
+
+## Non-negotiables
+
+The Principles section below says when each principle applies. Before you apply a principle, read its leaf in full this session. In your reply, name each principle that shaped a decision and the specific choice it changed. Cite only principles whose leaf you read this session.
+
+Remaining triggers:
+
+- **New branch.** Name it by the branch rule in `docs/directives/git-and-prs.md` before its first commit, in place of any name the session hands over (a cloud session's `claude/...` branch). `bun run names:check` fails any other name.
+- **The target is code** (reading a file or symbol, finding code, before an edit, tracing a flow). Call CodeGraph's `codegraph_explore` before Read, Grep, Glob, find or an Explore agent. Trust its results and do not re-check them with grep. Read config, Markdown, JSON and SQL migrations directly, since CodeGraph does not index them, and read a detail its output did not cover. If the MCP tool is unavailable, run `codegraph explore "<query>"`. Do not run `codegraph init`: a SessionStart hook builds the index. Where `codegraph` is not installed (a cloud session), there is no index, so use Read, Grep and Glob (`CLAUDE.md`).
+- **Command output.** It is condensed. Treat it as the complete result. Re-run a command as `rtk proxy <cmd>` only when its result is unusable: empty when output was expected, contradicting its exit code, or garbled.
+- **A feature plan.** Follow `docs/directives/plans.md`. Question the user over several rounds. Write `<feature_name>-plan.md` at the repo root, built from phases of slices, each slice with a checkbox. Implement nothing until the user gives the go-ahead. A prototype is an experiment run before implementation begins, not implementation, so it may run during the question rounds to settle a question (Prototype playbook). Its code stays on its throwaway branch, and the real build waits for the go-ahead. Commit once per phase, with its boxes ticked.
+- **Checks.** Run `bun run format` before committing. `bun run lint` must exit 0 with no warnings. `bunx vitest run <path>` runs one test file. Run `docs/verify/quick-check.sh` after each phase. Done is the branch's `docs/verify/verify-done.sh` exiting 0. Git ignores it, and each branch writes its own from `docs/verify/verify-done.template.sh`. `docs/references/commands.md` lists every script.
+- **Production or a backup.** Follow `docs/directives/production-safety.md`. See Autonomy.
+- **A doc.** Follow `docs/directives/writing-docs.md`. A new doc comes from the `byte-docs-add` skill. Update every doc the change makes stale in the same PR, or excuse it in the PR body with a `docs-unaffected: <doc> - <reason>` line. A change to the docs system itself goes in a PR of its own.
+- **A skill, AGENTS.md or CLAUDE.md.** Use the `writing-for-agents` skill, and its `SKILL-MECHANICS.md` for a skill. Run the Authoring playbook.
+- **Modules.** After changing `app.modules.ts`, a manifest or a `module.ts`, run `bun run modules:gen`. A new module goes through the `add-module` skill (`bun run new-module <id> [--foundation]`). To move code between files or modules, follow "Change a module" in `docs/references/modules.md`: move first, then reshape. The GOTCHAS in AGENTS.md name the traps in each area.
+- **Review agents.** A change to two or more of `foundation/<id>/`, `modules/<id>/` and the kernel (`server/`, `web/src/`, `shared/`) gets the `module-boundary-reviewer` agent. A branch that adds a file under `server/db/migrations/` or changes a `schema.ts` gets the `migration-reviewer` agent. Give each the base and the diff. Nothing in the repo calls them, so call them yourself.
+- **HANDOFF REQUIRED** from the handoff-guard hook. Run the Pause safely playbook (the `byte-handoff` skill). Tell the user about anything odd in the guard.
+- **PR status** ("babysit this", "get it green", "check on PR X"). Run the Babysit playbook. Opening a PR does not start it. A request to merge, land or ship is the Shipping playbook.
+- **A GitHub issue.** Issues live on `Bytefloww1013/bphs-connect` and are worked with `gh` (`docs/agents/issue-tracker.md`). `/byte-gh-issue-claim <N>` works one end to end. `/byte-gh-issue` files one, with exactly one `one-way-door` or `two-way-door` label. Never create a label. `docs/agents/triage-labels.md` maps triage roles to the repo's labels.
+- **Domain words.** Use `docs/references/project-glossary.md`. There is no root `GLOSSARY.md`, even where a vendored skill names one. Past decisions are the ADRs in `docs/adr/`.
+- **A user-invoked skill** (`disable-model-invocation: true`). Only the human can start it. Ask the user to run `/<name>`. These include `add-module`, `byte-docs-add`, `byte-docs-glossary`, `byte-docs-review`, `byte-gh-issue`, `byte-gh-issue-claim`, `chief-of-staff`, `to-spec`, `to-tickets`, `implement-spec` and `wayfinder`.
+
+## Repo rules
+
+The principles bend to these. The repo's rules live in these places:
+
+- **Directives.** `docs/directives/` holds `git-and-prs.md`, `plans.md`, `production-safety.md`, `versioning.md` and `writing-docs.md`. A rule under `## Rules` is either checked by a script (`[enforced: <script>]`) or tagged `[judgment]`. `bun run docs:check --rules` lists every `[judgment]` rule.
+- **Architecture.** The map is `docs/references/architecture.md`. How to add, change, depend on or remove a module is `docs/references/modules.md`. Each module's rules are in its own `README.md`. A feature's tables, rules, API, pages, seed, tests and README go in its module folder. Another module is imported only through its public API (`server/index.ts`, `shared/index.ts`, `web/index.ts`) and named in the manifest's `dependsOn`. To learn something from other modules, ask a server hook or draw a web slot, never import them.
+- **Skills written in this repo.** `add-module`, `byte-docs-add`, `byte-docs-glossary`, `byte-docs-review` and `byte-handoff` are not in `skills-lock.json`. `byte-gh-issue`, `byte-gh-issue-claim`, `impeccable` and `review-team` are installed from `Bytefloww1013/josh-skills`. For `byte-gh-issue-claim`, its doc says the repo's directives come first where the skill's defaults differ.
+- **Vendored skills.** 39 of the 48 skills under `.claude/skills/` are installed from `mattpocock/skills`. Their docs in `docs/skills/` say "Written for any repo, not this one: it doesn't know this repo's directives, glossary words or doc rules." That includes `writing-for-agents`, `diagnosing-bugs`, `tdd`, `prototype`, `research`, `code-review`, `codebase-design`, `pr`, `retro`, `chief-of-staff`, `implement-spec`, `to-spec`, `to-tickets`, `wayfinder` and `git-guardrails-claude-code`. They are tools the repo installed, not house practice. Hold what they produce to the directives and the glossary. Where a vendored skill and a principle differ on method, follow the principle. Neither lifts a gate the skill puts before the user, such as `tdd`'s seam confirmation.
+
+## Principles
+
+Read the leaf in full for any principle you apply (Non-negotiables). Each leaf is `../principle-<name>/SKILL.md`, where the name is the title in kebab case, hyphens kept and other punctuation dropped, unless the entry gives it. Open a leaf with Read. Their `disable-model-invocation: true` keeps them out of the Skill tool. They are reference text, so the user-invoked skill rule in Non-negotiables does not apply to them. Each leaf is written for any repo. Each entry below says when it applies in bphs-connect, what it asks, and where a repo rule narrows it.
+
+**Core**
+
+- **Laziness Protocol.** Refactoring, sizing a diff, or tempted to add a wrapper, a one-caller adapter or a flag threaded through several modules. Make the smallest change that solves the problem, with each decision in one place. Smallest is measured inside the module rules and after the companions the repo requires in the same PR: stale docs, the generated registries, `bun.lock`, the `tables:refs` baseline.
+- **Foundational Thinking.** Before writing logic in a module: its tables in `server/schema.ts`, its shared types, the order of a plan's phases, and what two accounts or jobs saving the same row share. Get the data shape right first, put scaffold phases before the features that use them, and decide what a second concurrent save does. Commits still follow phases (`docs/directives/plans.md`), and a shared type lives in the module's own `shared/` unless every module needs it.
+- **Redesign from First Principles.** A new requirement lands on an existing module, table or lookup. Design it as if the requirement had been there from the start, carry it through the code, docs, README `sources` and tests, then deliver it phase by phase. Decide the redesign in the plan, before the go-ahead. History is extended, never rewritten: an applied migration stays, and a conflict with an ADR is said out loud (`docs/agents/domain.md`).
+- **Attack the Premise.** Two or more fixes that share one premise have failed the same gate, such as a Phase 1 loop, a regression test, a CI check or a hillclimb harness. Write the premise down and test it before you write another fix that assumes it. The gate stays as it is. Never accept a snapshot, rewrite a baseline, relax a stop rule or turn off a lint rule to get past it.
+- **Subtract Before You Add.** Sequencing a feature, refactor or module move onto code that carries dead weight. Remove dead code, exports no module imports and stale doc lines first, then build on the simpler base. This covers code and docs only. A table, a stored record, an audit entry or an applied migration is never subtracted this way (`PRODUCT.md`, "Remove a module" in `docs/references/modules.md`), and the access declaration and shared schemas are required, not speculative.
+- **Minimize Reader Load.** Reviewing or reshaping code that is hard to trace, or judging whether a refactor earned its keep. Count the layers between a question and its answer and the state a reader must hold, and cut whichever costs more. A module's `index.ts` files, hooks, slots and the generated registries are the repo's boundaries, not pass-through layers. A small named helper beside its only caller stays (`.oxlintrc.json`).
+- **Outcome-Oriented Execution.** A planned rewrite or migration worked in phases, such as moving code between modules or replacing a module's storage. Aim every phase at the target shape and leave no compatibility shim behind. A slice may leave the typecheck or tests red only as Sequence Work into Verifiable Units allows. URLs, route access and stored data hold at every step.
+- **Experience First.** Scoping a feature with the user, choosing between UI variants, or shaping an API another module will call. Choose the work `PRODUCT.md`'s Product Principles put first (fast, keyboard-operable entry and trustworthy answers) over what is easiest to build, and propose cutting any control that does not earn its place. Here the polish is the restraint `DESIGN.md` asks for, not extra motion. The user decides scope, and the UI rules in `PRODUCT.md` and the current design tokens hold.
+- **Exhaust the Design Space.** A UI interaction, or a hard-to-reverse design choice, with no precedent in the architecture map, the module docs, `docs/adr/` or a sibling module. Build 2 or 3 competing variants or designs and compare them before committing, with the `prototype` skill's UI.md switcher or `codebase-design`'s DESIGN-IT-TWICE.md. Variants are prototypes, so they may run before the plan's go-ahead (Non-negotiables, "A feature plan"). They stay on the Prototype playbook's throwaway branch, and a question an ADR settled is reopened only by saying so.
+- **Build the Lever.** Any edit, sweep, analysis or check beyond a couple of obvious edits. Build the smallest script, generator or check that does or proves the work, as `bun run new-module` and `docs/verify/*` do, so a reviewer reruns it. A session lever lives under `tmp/`, and the reply or the PR's `## How it was checked` gives its command. A lever committed under `scripts/` or `docs/verify/` answers `--help` (`bun run scripts:help-check`) and gets its row in `docs/references/commands.md` from its header comment through `bun run docs:gen`. A lever never runs a `**Stop:**` step.
+
+**Architecture**
+
+- **Model the Domain.** Writing stateful logic, a new status or kind, or code that branches on a Form question type, a custody kind or a record's state across files. Encode it in one structure named in the glossary's words, such as a table keyed by kind, a status worked out from stored rows, or a discriminated union, instead of conditionals spread across the module. The structure lives inside the module folder. A new module goes through the user-invoked `add-module` skill. A new glossary term needs the user's yes, then `/byte-docs-glossary add <term>`, which the user runs.
+- **Boundary Discipline.** Wiring a route's body, a webhook, an importer, `server/config.ts`, a script's arguments, or a module's public API. Parse outside data once at that edge (the module's shared Zod schema through `json(schema)` in `server/http.ts`) and trust the parsed type inside. A public API exports what other modules need. A new reference to another module's table changes the `tables:refs` baseline, so the diff shows it (`docs/references/modules.md`, Boundaries). This is the system edge. An import across modules follows the Architecture rule in Repo rules, not this principle. Trusting the type never drops an access or visibility check in a service, and service rules stay in their transaction.
+- **Type System Discipline.** Designing a type, a signature, a shared schema or a table entry. Derive types from their owner (`z.infer` from the Zod schema, `$inferSelect` from the Drizzle table, a mapped type over a union key) so `bun run typecheck` names every variant left unhandled. Under `erasableSyntaxOnly`, a closed set is a string-literal union, never an `enum`. Brand an id where two ids of different kinds meet in one signature. Give a raw `sql` fragment its result type, as `sql<number>` in `modules/maintenance/server/summary.ts` does.
+- **Make Operations Idempotent.** Writing a module `startup`, a job, a webhook, a migration that moves rows, or a `docs/verify` or `scripts/` command. It must reach the same end state when run again after a restart, a retry or a crash, so read what is there and apply only the difference. A migration gets there by being all-or-nothing in its transaction, never by editing an applied one. The seed refuses a populated database on purpose. Safe to repeat never means free to run (Autonomy).
+- **Migrate Callers Then Delete Legacy APIs.** A module's public API, a hook, a slot, a manifest field or a kernel helper changes shape while callers still use the old one. Move every caller and delete the old shape in the same PR, with no alias, and update the tests to the new contract. `docs/directives/versioning.md` ships the app as one image, so these are internal. The contracts it names (environment variables, the Zoho webhook, data-changing migrations) follow that directive. Under `--auto`, a public API change and deleting code the run did not make are `one-way-door` options, which the Decision subagent never picks. Put the change in the plan before the go-ahead, so the user approves it there.
+- **Separate Before Serializing Shared State.** Two or more subagents, worktrees, claim runs or scratch servers might write the same file, branch, port or folder. Give each its own owned target first: its own files, worktree, `PORT` and `ROOT`. Each routes smoke gets its own `PORT` and `ROOT` too. Stop a server on 3391 only when you started it or no other run owns it (AGENTS.md gotcha). A generated file (the module registries, `bun.lock`, the migration journal, the whole-repo baselines) is never merged by hand: its command writes it again, as the Orchestrate playbook's step 3 says.
+
+**Verification**
+
+- **Prove It Works.** Before you call a slice, phase or task done, or rely on a subagent's report or a handoff's claim. Run the real thing on the seed or the scratch server (the test by name, the page through `browser.mjs`, the API through the test kit) and read what it printed. The scripted proof is the branch's git-ignored `verify-done.sh`, with its PASS lines under `## How it was checked`. When output looks wrong, suspect the condensing first and use `rtk proxy` as Non-negotiables allow. CodeGraph's results for locating code still stand.
+- **Fix Root Causes.** Debugging a reported bug, a failing check or a live symptom. Trace the symptom back to the first place the code went wrong and fix it there. A guard, retry, catch or clamp is the fix only when the state it handles is legitimate. Fix the instances the branch's issue covers and list the rest for the user. Instrument on the loop, the seed or the scratch server, since production instrumentation needs the user's permission.
+- **Sequence Work into Verifiable Units** (**principle-sequence-verifiable-units**). A plan's phases and slices, a sweep across modules, or a run of similar edits. Check each slice (`bun run typecheck` and its touched tests) and each phase (`docs/verify/quick-check.sh`). Never start the next slice on red, except after a slice the plan's rules block names as allowed to stay red (Outcome-Oriented Execution). A phase never ends red. Commit per phase, not per unit (`docs/directives/plans.md`), with a move and its reshape in one commit. The squash merge keeps one commit, so the PR body shows the red-then-green.
+- **Test Behavior, Not Implementation.** Writing, changing or keeping a Vitest test, a regression test, or a pin for a refactor. Drive the code through what its users touch (the API through the test kit's `t.call`, a page on the scratch server) and assert what they can observe, with the expected value taken from the requirement. Read another module's rows back through its API. A pinned invariant, such as `server/access/route-declarations.txt` or an `explain query plan` check, is behavior.
+- **Explain the Number.** Before you measure, and before you trust, report or act on a timing (Perf issue, Hillclimb) or a skill change's effect (Eval). Write down the result that would change the decision, name what limits the number, and rule out errors, skipped or cached work, noise and an untuned side. Volume comes from seed or harness-inserted rows, never live data or a backup, and the report names the row count, the Node version and where the database lived.
+
+**Delegation**
+
+- **Guard the Context Window.** A bulk read is coming, such as a long log, a HAR or trace, a transcript, a wide diff or a fan-out plan. For code, call `codegraph_explore` first. Hand other bulk to a subagent and keep only its reduced finding in the main thread. The handoff guard ignores subagents, so cap each one's files and turns in its brief. On HANDOFF REQUIRED, the handoff comes first.
+- **Never Block on the Human.** About to ask "should I do X?" about reversible work on the issue's branch that no gate covers (after the go-ahead, when the work has a plan), such as a choice inside the plan, the order of slices, a fix for a failing check, or a line for the issue notes. Decide, do it, and report why (Autonomy, "Decide and report"). It covers nothing else. Every gate in Autonomy, the plan's question rounds, and the gates of user-invoked and vendored skills stay with the user.
+
+**Meta**
+
+- **Encode Lessons in Structure.** The same correction or instruction comes up a second time, in a session, a retro or an issue notes block. Encode it as a check the repo already runs, such as an `.oxlintrc.json` rule, a script listed in `docs/verify/gate-checks.txt`, or an `[enforced: <script>]` directive rule. Propose a new directive rule to the user rather than adding one, and ship a change to `scripts/docs*` or a directive in a PR of its own. A lesson that needs judgment becomes the target behavior stated plainly, as an AGENTS.md gotcha in its "X -> Y" form, naming the failure it prevents, used sparingly.
+
+## Autonomy
+
+**Decide and report.** Reversible work on the issue's branch that no gate below covers (after the go-ahead, when the work has a plan), such as a choice inside the plan, the order of slices, a fix for a failing check or a line for the issue notes: make the call, do it, and give the reason in the reply (Never Block on the Human). Anything that cannot be undone, or that posts outside the repo (a comment, an issue, a label), still asks, unless it is a step of a skill the user started. This never waives a gate below, a plan's question rounds, or a gate in a skill, such as `tdd`'s seam confirmation or a `/byte-gh-issue-claim` approval.
+
+**Needs the user's word.**
+
+- Never push to `main`. Merge a PR only when the user says to (`docs/directives/git-and-prs.md`). A Decision subagent never stands in for that, even under `--auto`.
+- Open a PR only with the user's explicit say-so, given case by case (`docs/directives/git-and-prs.md`). Running `/byte-gh-issue-claim <N> --auto` is that say-so for the issue's own PR. Without `--auto`, the claim skill asks at Step 9 and ends with the branch pushed and no PR on a no.
+- A plan is implemented only after the user's go-ahead, unless explicit permission is given.
+
+**Pushing a branch** needs no say-so. Only `main` is never pushed to.
+
+**Needs the operator's go-ahead** (`docs/directives/production-safety.md`).
+
+- A how-to step that can't be undone (it starts the app, restores a database, deletes the databases a restore set aside, or runs `admin.ts`) carries a `**Stop:**` line. Never run it without the operator's go-ahead, given in that session for that step. A step that is safe to repeat still needs the go-ahead for each run.
+- Never use a real backup or a copy of the live database for development work or tests. Use the seed or the scratch server (`docs/verify/scratch-server.sh`). Staging is the exception, for rehearsing upgrades only. Read staging's database or its pulled backups only through the staging script, and never copy them into the repo, `tmp/` or a test.
+- During an upgrade, never run `docker compose down -v`, remove `bphs-connect-data` or prune volumes (`docs/how-to/upgrade-production.md`).
+
+**Who merges.** The repo owner merged all 102 merged PRs (of 105), release PRs included. GitHub's `allow_auto_merge` setting is on, but no file in the repo arms auto-merge and none calls `gh pr merge`. It has no CODEOWNERS file, and branch protection for `main` could not be read (HTTP 403). `docs/directives/git-and-prs.md` says PRs to `main` are squash-merged only, as a `[judgment]` rule: GitHub still allows merge commits and rebase merges.
+
+**`--auto`.** `/byte-gh-issue-claim <N>` stops at each approval gate. With `--auto`, each gate goes to a Decision subagent instead. It never picks a `one-way-door` option. On `STOP` (every option is a one-way door) the run stops and asks the user. No decision can waive a Guardrail, because a Guardrail is the user's.
+
+**Guardrails actually wired.** `.claude/settings.json` holds only hooks. It has no permissions block and no env block.
+
+- `.claude/hooks/handoff-guard.py` runs on SessionStart (`startup|clear|compact`), UserPromptSubmit, PreToolUse and PostToolUse (every tool). On Opus sessions it prints HANDOFF REQUIRED before the autocompact. While a handoff is pending, it denies tool calls other than handoff work and allows only a short list of git subcommands. Its own comment calls the check a shortcut that checks command names only. It ignores subagent events.
+- `scripts/codegraph-ensure.sh` runs on SessionStart (`startup|resume`), async.
+- `scripts/claude-edit-hooks.ts` runs before and after each Edit or Write. Before, it refuses an edit to a generated module registry, the route tree, a reference `bun run docs:gen` writes, or a migration SQL file or snapshot already on the base branch. After, it formats the edited `.ts`, `.tsx` or `.json` file with Oxfmt.
+- The `impeccable` design hook runs on SessionStart, after each Edit or Write (it checks UI edits), and on Stop (a deeper design pass), when the skill's binary is present. `impeccable hooks off` turns it off for everyone (`docs/skills/impeccable.md`). In a cloud session its first run downloads the binary and can time out.
+- `block-dangerous-git.sh` from the `git-guardrails-claude-code` skill is not wired. It is not in `.claude/settings.json`, and `.claude/hooks/` holds only `handoff-guard.py`. Outside a pending handoff, no hook blocks a git command.
+
+Not established in bphs-connect: a session override such as "don't stop" or "be fully autonomous" beyond `--auto`, or a scheduled wake-up for a run.
+
+## Subagents
+
+Hand bulk reads to subagents per Guard the Context Window, and split their write targets per Separate Before Serializing Shared State (Principles). The repo sets subagent rules only inside its skills and agents:
+
+- **`byte-gh-issue-claim --auto`.** One Decision subagent per gate question (Agent tool, fresh context), a batch's questions in one message. It is read only. It replies `DECISION:` / `OPTIONS:` / `PROOF:`, or `STOP:`. Print each reply verbatim under `### Decision: <gate>`. In the plan's Ownership table, shared files (lockfiles, manifests, CI config, CLAUDE.md/AGENTS.md, the plan) belong to `main`.
+- **`byte-docs-review`.** One reviewer subagent with `model: "opus"`. Its findings pass `bun run docs:quote-check`, then a refuter that never receives the reviewer's `why` or reasoning. The skill needs the Opus model.
+- **`byte-docs-glossary audit`.** Eight subagents in one message, `model: "opus"`, each with one lens (`grounding` or `clarity`).
+- **`review-team`.** A fleet of reviewer subagents against the same change, prompts in `reviewers/`. Mode `single` by default. `iterate` only when the user asks for it, stopping when more rounds bring no material new findings. Each reviewer is told it cannot see the others.
+- **`code-review`** (vendored). Two sub-agents in parallel, issued together in the foreground, each brief under 400 words.
+- **`implement-spec`** (vendored). A fresh implementer subagent per ticket, each in its own worktree on its own branch, and a merger subagent that merges each into the integration branch. Its last step cleans up the implementer worktrees.
+- **`chief-of-staff`** (vendored). All work in subagents, to protect the context window. A retro on about one in five subagent sessions.
+- **`codebase-design`** (vendored, `DESIGN-IT-TWICE.md`). Three or more sub-agents in parallel, each with a fresh context window.
+- **Agents in `.claude/agents/`.** `module-boundary-reviewer` and `migration-reviewer`. Both are read only, with the tools Read, Grep, Glob and `codegraph_explore`. Each answers `no findings` with the files it read when no rule is broken.
+
+Not established in bphs-connect: a default subagent type, a model per role outside the Opus skills above, a background or foreground default, or a repo-wide rule on reusing a subagent.
+
+## Writing the reply
+
+Each playbook's **Reply:** line names what to report. Add to it:
+
+- **Principles.** Each principle that shaped a decision, with the choice it changed, cited only from leaves read this session (Non-negotiables). When you cite Build the Lever, give the lever's command.
+- **Calls made without asking.** Each one with its reason, so the user can correct it (Never Block on the Human).
+
+Not established in bphs-connect: a repo rule for the agent's chat reply. The PR body keeps the template's sections. What the repo does say about writing:
+
+- **Docs.** `docs/directives/writing-docs.md`. A fact, rule or procedure has one home, and everywhere else links to it. A shell command is written in one doc only (`scripts/docs-dupes.ts`). A doc stands on its own. Clear words: short sentences, the plain word over the technical one, and no history of how the doc came to be. Use the glossary's word (`bun run docs:terms`). A reference backs each claim with a file and a symbol, never a line number. A generated doc changes through its source and `bun run docs:gen`, never by hand.
+- **Agent-facing text** (skills, AGENTS.md, CLAUDE.md). The `writing-for-agents` skill: one trigger per branch, one source of truth per meaning, every line checked for relevance, and a no-op sentence deleted whole. State the target behavior rather than a prohibition.
+- **PR body.** Draft it in `tmp/pr-body.md` with the sections of `.github/pull_request_template.md`: `## What and why`, `## How it was checked`, `## Docs unaffected`, `## Merge Danger` (`**Door:**` one-way or two-way and why, `**Blast Radius:**` what a wrong change reaches), `## Checklist`. The title is a Conventional Commit, `<type>(<scope>): <subject>`, with the type its branch's descriptor maps to. It becomes the commit on `main` and decides the next version. Details are in the Opening a PR playbook.
+- **Commits.** Commit subjects on a branch follow Conventional Commits too.
+
+## Comments
+
+What the repo says about comments and lint:
+
+- `bun run lint` must exit 0 with no warnings. Turn a noisy Oxlint rule off in `.oxlintrc.json` with a one-line reason, never with `oxlint-disable` comments.
+- `no-console` is an error. It is off for server code (`server/**`, `foundation/*/server/**`, `modules/*/server/**`), where the server has no logger and `console` is its log, for `scripts/**`, and for `web/src/lib/submit.ts`.
+- `docs/**` is in both the Oxfmt and Oxlint ignore lists, so check `docs/verify/*.mjs` with `node --check` and by running them. Markdown and generated files are in Oxfmt's `ignorePatterns`, so do not format them by hand.
+
+Not established in bphs-connect: a rule on when to write or remove a code comment. Fix Root Causes gives one test: a workaround that needs a paragraph-long comment to justify it means the code is wrong, so fix the code.
+
+## Playbooks
+
+Match the task to a playbook below and open its full steps at `playbooks/<name>.md`. Follow its steps in order. If no playbook fits, follow AGENTS.md and the directives, and tell the user no playbook covers the task.
+
+- **Investigation** (`playbooks/investigation.md`). A read-only question. The deliverable is a cited answer, from CodeGraph and the repo's maps: architecture, modules, glossary, ADRs, directives.
+- **Bug fix** (`playbooks/bug-fix.md`). A reported defect on a `bug/...` branch, worked through the `diagnosing-bugs` skill's phases from a loop that goes red on the bug, with the regression test written by the vendored `tdd` skill's red-green loop (`../tdd/SKILL.md`).
+- **Perf issue** (`playbooks/perf-issue.md`). A measured slowness, with a before and an after from the same command. Not established: perf tooling. You build the measurement.
+- **Hillclimb** (`playbooks/hillclimb.md`). Sustained improvement of one metric against a target: one change, one measurement, keep or revert. Not established: a benchmark harness or a CI perf job.
+- **Runtime forensics** (`playbooks/runtime-forensics.md`). Diagnose a live symptom from the server's `console` output, the `hono/logger` request lines and the browser's errors. The deliverable is a diagnosis. Not established: profiles, heap snapshots, tracing, a logging library or request IDs.
+- **Trace forensics** (`playbooks/trace-forensics.md`). Diagnose a captured artifact handed over after the fact. Not established: profiler or trace tooling, or a place for the artifact.
+- **Feature** (`playbooks/feature.md`). New or changed behavior on a `feature/...` branch: plan per `docs/directives/plans.md`, the data shape in the module system, then the repo's gates.
+- **Refactoring** (`playbooks/refactoring.md`). A behavior-preserving change on a `refactor/...` branch, with the behavior pinned by tests, the routes smoke and the route declarations.
+- **Prototype** (`playbooks/prototype.md`). A throwaway sketch to settle a design question, through the vendored `prototype` skill. Not established: which descriptor and action the prototype branch takes (its name must still pass `names:check`), and whether to push it.
+- **Visual parity** (`playbooks/visual-parity.md`). UI equivalence judged by eye from screenshots of the seeded scratch server. Not established: pixel-diff tooling. Never report "pixel-exact".
+- **Authoring or modifying a skill** (`playbooks/authoring-a-skill.md`). A skill written by `writing-for-agents`, with its invocation choice and its doc at `docs/skills/<name>.md` in the same PR. Not established: rules for `agents/openai.yaml`, or a test of a skill's effect on agents.
+- **Eval** (`playbooks/eval.md`). Testing how a skill or prompt change affects agent behavior. Not established: any eval harness. Run the doc checks and offer `/byte-docs-review`.
+- **Babysit** (`playbooks/babysit.md`). Drive one PR to `main` to green, then stop. A babysit never merges: only the user's word does, through Shipping. For comments on the PR it uses `references/triage.md`, which covers what a PR here actually gets (the Super-linter summary, created-release comments, `byte-docs-review` findings), since the repo has no review bot. Not established: a retry rule, stacked PRs or a merge queue.
+- **Shipping** (`playbooks/shipping.md`). Land a PR only on the user's word: squash merge, confirm it merged, delete the local branch, expect the release PR. A release PR's `CI` and `PR checks` runs wait at `action_required`, and it merges without them (`docs/directives/versioning.md`).
+- **Autonomous run** (`playbooks/autonomous-run.md`). Drive one task to an exit condition of checks that exit 0, such as `/byte-gh-issue-claim <N> --auto`, stopping where the repo says a human decides. Not established: a scheduled wake-up.
+- **Orchestrate** (`playbooks/orchestrate.md`). A standing program of many issues under one coordinator, through `chief-of-staff`, `to-spec`, `to-tickets` and `implement-spec`. Subagents build and the user merges. Not established: stacked PRs, an agent merging, or a verifier per PR on a different model.
+- **Autopilot-full** (`playbooks/autopilot-full.md`). A queue of issues, each run to green and reviewed on its own PR from `main`. The merge waits on the user's word. Not established: an agent merging a PR on its own.
+- **Autopilot-stack** (`playbooks/autopilot-stack.md`). Autopilot-full that stops at green and reviewed and hands the PRs to the user. Not established: stacking. Every PR branches from `main`.
+- **Session pickup** (`playbooks/session-pickup.md`). Resume prior work from the handoff, the plan, the branch and the issue, checked against the repo. Not established: a step that loads a handoff into a new session.
+- **Pause safely** (`playbooks/pause-safely.md`). A clean stop with a `byte-handoff` handoff, on request or on HANDOFF REQUIRED.
+- **Multi-phase or multi-PR plan** (`playbooks/multi-phase-plan.md`). A feature plan, a spec with tickets, or a `wayfinder` map, written before any build. Not established: a checker for `<feature_name>-plan.md`, or a CI job that reads plans.
+- **Worktree and simulator cleanup** (`playbooks/worktree-cleanup.md`). Remove merged, clean worktrees and their branches. Not established: a cleanup script, `git worktree prune`, or any iOS simulator use.
+- **Opening a PR** (`playbooks/opening-a-pr.md`). Invoked at the end of every other playbook: branch, commits, docs, body, local gates, title, then push, and open only on the user's say-so (Autonomy). Not established: draft PRs.
+
+

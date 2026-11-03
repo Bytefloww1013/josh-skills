@@ -1,0 +1,43 @@
+### Refactoring
+
+**The structure changes. The behavior does not.** Distinct from Feature, which adds behavior, and Bug fix, which corrects it.
+
+If the cleanup turns up a missing feature or a real bug, split it out. Ship the structural change first, then route the rest to `playbooks/feature.md` or `playbooks/bug-fix.md`.
+
+1. Branch from the issue as `refactor/<action>-issue<N>-<description>` (actions such as `move` and `rename` are in `docs/directives/git-and-prs.md`). Commit subjects take the `refactor(<scope>): ...` form, as #241 did.
+2. Learn the contract. Read `docs/references/architecture.md`, `docs/references/modules.md` and the module's `README.md`. Query CodeGraph before Read or Grep. Read the ADRs in `docs/adr/` that touch the area. If the refactor contradicts one, say so explicitly (`docs/agents/domain.md`).
+3. Pin the behavior before moving anything:
+   - The tests sit next to the code. Most server tests are API integration tests against an in-memory database. Run the area's tests with `bunx vitest run <path>` and keep them green.
+   - `docs/verify/routes-smoke.mjs` was written as the behaviour-neutral guard for the modular-architecture refactor (issue #23). It opens every route as several demo accounts and checks each page opens as it does today. Route files and server code may move. URLs do not. `docs/verify/gate-checks.txt` lists it as a `ci` check only, so quick-check does not run it.
+   - `server/access/route-declarations.txt` pins who can call each API route (method, path, resource, level), and `server/access/route.test.ts` checks it. A change there is an access change, not a refactor.
+   - Before the move, read the area's tests for any that assert internals (a private helper, call order, a file path). Rewrite those against the public API and watch them pass on the old code. A test that still fails after a pure move was pinned to the implementation: rewrite it the same way, then redo the move (**principle-test-behavior-not-implementation**).
+4. Name the target shape. State what the module's layout, types and hooks would be if it were built today, and name the structure the code is missing. Boring code stays when the shape is already clear and local (**principle-redesign-from-first-principles**, **principle-model-the-domain**).
+   - Use the `codebase-design` skill's vocabulary. Apply its deletion test: a module whose complexity vanishes when deleted was a pass-through. One adapter means a hypothetical seam, two mean a real one. A module's `index.ts` files, its hooks, its slots and the generated registries are the repo's boundaries, not pass-through layers. For competing interfaces, use its DESIGN-IT-TWICE.md. Precedent: #241 gave each Form question type one entry in a shared question type table, `modules/forms/shared/question-types.ts`.
+   - Subtract before you reshape. Delete dead code, exports no other module imports, and doc lines the change leaves stale first. A table, an applied migration, an audit entry or a stored record is never subtracted in a refactor (**principle-subtract-before-you-add**).
+   - Of the shapes that pass, ship the smallest diff that reaches one, with each decision in one place (**principle-laziness-protocol**).
+5. Move inside the module rules:
+   - Move first with `git mv`, then reshape, in the same commit, so `git blame -C -C` follows it.
+   - Converge on the target shape. A changed public API, hook, slot or manifest field moves every caller and deletes the old shape in the same PR, with no alias export or wrapper left for old import paths. `bun run lint` and `bun run typecheck` find the callers. Update the tests to the new contract, including the `expectToday` registry tests. Precedent: #107 and #114 (**principle-outcome-oriented-execution**, **principle-migrate-callers-then-delete-legacy-apis**). URLs, `server/access/route-declarations.txt` and stored data hold at every step.
+   - An edit repeated across many files gets a script. Make the first edit by hand, write the script under `tmp/`, rerun it on that file and diff. Give its command under `## How it was checked` in the PR body (**principle-build-the-lever**).
+   - Inside a module, use relative paths. Across modules, import only `server/index.ts`, `shared/index.ts` or `web/index.ts`, and name the module in `dependsOn`.
+   - A helper several modules use belongs to the foundation module it is about. A kernel helper you need is exported from the kernel, not copied.
+   - After changing `app.modules.ts`, a manifest or a `module.ts`, run `bun run modules:gen` and commit the generated registries with the change.
+   - A change that adds or removes a cross-module table reference runs `bun run tables:refs --write` and commits the new baseline (`scripts/tables-refs.baseline.json`). A moved or renamed file that already references another module's tables counts too: CI fails on a reference in a file the baseline doesn't list.
+   - A schema move must leave `docs/verify/schema-drift.sh` passing. drizzle-kit reads only `server/db/schema.ts` and the `foundation/*` and `modules/*` `server/schema.ts` files, so a table moved out of those shows as a drop (AGENTS.md). A migration that rebuilds a table follows the AGENTS.md gotcha (one transaction, foreign keys on, as 0023, 0024 and 0025 do).
+   - Update the docs the move makes stale in the same PR, such as a module README's `sources` and any path a doc quotes (`docs:check` and `docs:stale` check these). Otherwise excuse each with `docs-unaffected: <doc> - <reason>` in `tmp/pr-body.md`, as #241 did.
+6. Prove behavior is unchanged:
+   - In a sweep across modules or files, change one module at a time, and run `bunx vitest run <path>` and `bun run typecheck` before the next (**principle-sequence-verifiable-units**).
+   - `docs/verify/quick-check.sh` exits 0. It formats the tree with `bun run format`, then runs every `quick` check in `docs/verify/gate-checks.txt`, including `bun run lint` (its `boundaries/imports` rule enforces the module boundaries), `bun run test`, `bun run typecheck`, `bun run build` and `bun run tables:refs`.
+   - `SKIP_BUILD=1 node docs/verify/routes-smoke.mjs` passes. It needs full Chrome (`CHROME`, else the first on PATH) and its own server on port 3391. CI runs it after the build. If you leave it to CI, as #241 did, say so and read its result on the PR before you call the refactor done (**principle-prove-it-works**).
+   - `docs/verify/verify-done.sh` exits 0. Git ignores it: write it for the branch from `docs/verify/verify-done.template.sh`.
+   - A refactor that crosses modules, or a module and the kernel, can go to the `module-boundary-reviewer` agent (`.claude/agents/module-boundary-reviewer.md`), which reads the change against the module rules.
+7. Judge the reader load. A new reader should find where a value comes from and what can change it at least as fast as before. If the diff makes that slower, say so in the reply. Revert a reshape you chose yourself, not one the issue asks for (**principle-minimize-reader-load**).
+8. Run **Opening a PR** (`playbooks/opening-a-pr.md`). The PR title type must match the branch's descriptor (`bun run names:check`).
+
+Wide scans: the user-invoked `improve-codebase-architecture` skill writes a candidate report to the OS temp directory and asks which candidate to explore. It reads `GLOSSARY.md`, but this repo uses `docs/references/project-glossary.md`. Do not create a `GLOSSARY.md`.
+
+Not wired: dependency-cruiser exists only inside the `setup-ts-deep-modules` skill. There is no config at the repo root and no `lint:boundaries` script. `bun run lint` is the boundary check.
+
+**Reply:** the structure that changed, the pin you held it against (tests, routes smoke, route declarations), the quick-check and routes-smoke output, the reader-load change, what got reverted. No new behavior.
+
+Sources: AGENTS.md, CLAUDE.md, docs/directives/git-and-prs.md, docs/references/architecture.md, docs/references/modules.md, docs/references/project-glossary.md, docs/agents/domain.md, docs/adr/, .claude/skills/codebase-design/SKILL.md, .claude/skills/improve-codebase-architecture/SKILL.md, .claude/skills/setup-ts-deep-modules/SKILL.md, docs/verify/routes-smoke.mjs, docs/verify/quick-check.sh, docs/verify/gate-checks.txt, docs/verify/schema-drift.sh, docs/verify/verify-done.template.sh, scripts/oxlint-boundaries.ts, scripts/tables-refs.ts, .github/pull_request_template.md, scripts/names-check.ts, .claude/agents/module-boundary-reviewer.md, server/access/route.test.ts, package.json, .github/workflows/super-linter.yml
