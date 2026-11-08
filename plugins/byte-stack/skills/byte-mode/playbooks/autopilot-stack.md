@@ -8,6 +8,6 @@ Run the **Autopilot-full** playbook (`playbooks/autopilot-full.md`), but stop be
    - When its base changes to `main`, the `Start CI on a retargeted PR` job runs `gh workflow run CI --ref "$HEAD_REF"`. That tests the branch, not the PR merged into `main`.
    - A squash merge leaves the lower branch's commits off `main`.
 
-**Reply:** list each PR with its link, its checks at the head, its review findings and its Door, in place of what merged.
+**Reply:** list each PR with its link, its checks at the head, its review findings and its Door, in place of what merged. Each merge is the user's call: lay them out as the **ketchup** helper's action items.
 
 Sources: docs/directives/plans.md, docs/directives/git-and-prs.md, docs/skills/byte-gh-issue-claim.md, .claude/skills/byte-gh-issue-claim/SKILL.md, .claude/skills/pr/SKILL.md, .github/workflows/pr-checks.yml, .github/workflows/super-linter.yml

@@ -23,4 +23,4 @@ To have a repo offer it to everyone who opens it, add to that repo's `.claude/se
 }
 ```
 
-- **byte-stack**: `byte-mode` for bphs-connect, its playbooks, the principle skills it applies, its helper skills (`how`, `architect`, `arena`, `ketchup` and more), and the `byte-agent` delegate subagent. Every skill is manual-only (`disable-model-invocation`); run them as `/byte-stack:<skill>`.
+- **byte-stack**: `byte-mode` for bphs-connect, its playbooks, the principle skills it applies, its helper skills (`how`, `architect`, `arena`, `ketchup` and more), and the `byte-agent` delegate subagent. Most skills are manual-only (`disable-model-invocation: true`); run them as `/byte-stack:<skill>`. `how`, `blast-radius`, `unslop` and `technical-writing` are also model-invoked, so Claude can start them when a request fits, and `byte-mode`'s playbooks run the helpers each step names.

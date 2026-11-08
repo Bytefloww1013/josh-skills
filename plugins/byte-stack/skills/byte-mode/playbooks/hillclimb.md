@@ -20,6 +20,7 @@ Core discipline: one change, one measurement, keep or revert. Never claim a win 
    - Keep the change only when the metric moves by more than the run-to-run spread and the tests stay green. Otherwise revert it in full.
    - Commit each kept change with a Conventional Commits subject. Log the row either way.
    - When two reverted attempts share one premise about where the cost is, write the premise in the attempt log and test it with the frozen harness before the next attempt (**principle-attack-the-premise**).
+   - When the log holds no ranked hypothesis left to try, run the **swarm** helper for new ones: read-only workers, one per part of the slow path, each reporting where it thinks the time goes and its evidence, such as an `explain query plan` line or a count of rows read. Workers never time an attempt, since parallel runs on one machine add noise. Measure each hypothesis yourself with the frozen harness, one at a time.
 6. Stop at the stop rule. Do not relax it to meet it. If you are stuck, say so instead of spinning.
 7. Run `docs/verify/quick-check.sh`, then **Opening a PR** (`playbooks/opening-a-pr.md`). PRs are squash-merged, so the kept commits become one commit on `main`. In the PR body, list each kept change under the template's "What and why", and give the harness command, baseline and final number under "How it was checked" (`.github/pull_request_template.md`).
 

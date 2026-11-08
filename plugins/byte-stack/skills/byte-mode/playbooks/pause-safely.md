@@ -5,7 +5,7 @@
 Pause when the user asks for a handoff, or when the handoff-guard hook prints HANDOFF REQUIRED. A handoff is not a stop: once it is saved, carry on with the task (`byte-handoff` step 4).
 
 1. Stop at a safe point. Finish the current slice or leave its box unticked. Tick a slice `- [x]` only when it is done and its tests pass.
-2. Do not commit a half-done phase. A plan commits once per phase, not per slice, and a red phase is never committed. The handoff lists the uncommitted files instead.
+2. Do not commit a half-done phase. The code is committed once per phase, not per slice, and a red phase is never committed. The handoff lists the uncommitted files instead.
 3. Take no irreversible step to pause. Do not push (`byte-handoff`: "Don't push"), though `docs/directives/git-and-prs.md` lets a branch be pushed without asking elsewhere. Open no PR: that needs the user's say-so (Autonomy in `SKILL.md`). A `/byte-gh-issue-claim` run does push after each green phase, as its own Step 6, not as part of a pause.
 4. Write the handoff with the `byte-handoff` skill (`/byte-handoff`). It runs `mkdir -p <root>/handoff` and writes `<root>/handoff/handoff-$(date +%Y%m%d-%H%M%S).md`. Bullets only, under 30 lines and 2,500 characters. The title is `# Handoff YYYY-MM-DD HH:MM, <repo name> @ <branch> (<short HEAD sha>)`, then four sections:
    - Goal: point to the plan or spec file rather than restating it.
