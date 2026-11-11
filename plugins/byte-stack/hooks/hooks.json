@@ -1,0 +1,52 @@
+{
+  "description": "Handoff guard: on Opus, asks for a byte-handoff 35k tokens before the autocompact and pastes it back in after it. Does nothing in a project with its own .claude/hooks/handoff-guard.py.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ ! -f \"${CLAUDE_PLUGIN_ROOT}/hooks/handoff-guard.py\" ] || python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/handoff-guard.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ ! -f \"${CLAUDE_PLUGIN_ROOT}/hooks/handoff-guard.py\" ] || python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/handoff-guard.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ ! -f \"${CLAUDE_PLUGIN_ROOT}/hooks/handoff-guard.py\" ] || python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/handoff-guard.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ ! -f \"${CLAUDE_PLUGIN_ROOT}/hooks/handoff-guard.py\" ] || python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/handoff-guard.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,6 +1,6 @@
 {
   "name": "byte-stack",
-  "description": "bmode for bphs-connect: its playbooks, the principle skills it applies under the repo's rules, its helper skills, and the byte-agent delegate subagent.",
+  "description": "bmode for bphs-connect: its playbooks, the principle skills it applies under the repo's rules, its helper skills, and the byte-agent delegate subagent. For any repo: the byte-handoff skill and the handoff guard hook that asks for it before the autocompact.",
   "author": {
     "name": "Bytefloww1013"
   },
