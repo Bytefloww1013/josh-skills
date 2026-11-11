@@ -10,7 +10,7 @@
 4. Name the data shape before writing logic, in the module system's terms. Choose its organizing structure per **principle-model-the-domain**, and fit the tables and types to the routes, hooks and pages that read them (**principle-foundational-thinking**):
    - A feature's tables, rules, API, pages, seed, tests and README go in its module folder.
    - A new module goes through the repo's `add-module` skill (`bun run new-module <id> [--foundation]`, ending with `docs/verify/quick-check.sh`).
-   - A new table, column or index goes in the module's `server/schema.ts`, then `bun run db:generate --name <what>`. Read the migration.
+   - A new table, column or index goes in the module's `server/schema.ts`, and the New migration playbook (`playbooks/new-migration.md`) makes its migration.
    - If two accounts can save the same row, decide what the second save does before writing the route. Edits in this app refuse a save over a newer one with 409 `stale_version` (`docs/references/api-errors.md`), as the Form builder's working copy does (`modules/forms/README.md`).
    - A status the clock or other rows decide is worked out, never stored, as `taskStatus` in `modules/tasks/shared/tasks.ts` is.
    - Data from another module comes through a server hook or a web slot, or through its public API (`server/index.ts`, `shared/index.ts`, `web/index.ts`) with the module named in the manifest's `dependsOn`. If the feature changes the shape of a hook, slot or public API, move its callers and drop the old shape in this PR (**principle-migrate-callers-then-delete-legacy-apis**).
@@ -20,7 +20,6 @@
    - After changing `app.modules.ts`, a manifest or a `module.ts`, run `bun run modules:gen` and commit the generated registries with the change.
    - Every API route's first handler is its access declaration. Accept new routes with `bunx vitest run server/access/route.test.ts -u` and read the `server/access/route-declarations.txt` diff.
    - A route parses its body once with the module's shared Zod schema (`json(schema)` from `server/http.ts`), and the service trusts that type (**principle-boundary-discipline**). A rule the page and the server both judge is a pure function in `shared/`, as `shared/access-change.ts` is.
-   - A migration runs inside one transaction with foreign keys on. Rebuild a pointed-at table the way migrations 0023, 0024 and 0025 do.
    - A `startup`, a job or a webhook runs again after a restart or a retry. Read what is there and apply only the difference, as `sendDueSeries` (`modules/tasks/server/series.ts`) and `ensureDefaultLists` (`modules/assets/server/lists.ts`) do (**principle-make-operations-idempotent**).
    - Anything that touches production or a backup follows `docs/directives/production-safety.md`. Never develop or test against a real backup or a copy of the live database.
    - A race between two saves, a retry or a restart, where tests reach the bad order only by luck, is a candidate for formal verification. Offer the **create-formal-verification-skill** helper in the reply, for after the merge.

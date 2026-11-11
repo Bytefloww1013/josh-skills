@@ -9,7 +9,7 @@ disable-model-invocation: false
 
 Explore the codebase to answer "how does X work?" questions. Produce architectural explanations at the level of a senior engineer onboarding onto a subsystem, enough to build a working mental model, not so much that it reads like annotated source code.
 
-Every spawn is a Task subagent. Explorers use the `how explorer` line (default `claude-opus-5-5-high`), and every explainer uses the `how explainer` line (default `claude-opus-5-5-xhigh`). Pick each subagent's reasoning level for the job, per the Subagents section of the **byte-mode** skill.
+Every spawn is a Task subagent. Explorers use the `how explorer` line (default `claude-opus-5-5-high`), and every explainer uses the `how explainer` line (default `claude-opus-5-5-xhigh`). Pick each subagent's reasoning level for the job, per the Subagents section of the **bmode** skill.
 
 ## 1. Assess complexity
 

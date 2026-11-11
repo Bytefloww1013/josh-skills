@@ -8,7 +8,7 @@
     {
       "name": "byte-stack",
       "source": "./plugins/byte-stack",
-      "description": "byte-mode for bphs-connect: its playbooks, the principle skills it applies under the repo's rules, its helper skills, and the byte-agent delegate subagent."
+      "description": "bmode for bphs-connect: its playbooks, the principle skills it applies under the repo's rules, its helper skills, and the byte-agent delegate subagent."
     }
   ]
 }
