@@ -99,6 +99,21 @@ def context_tokens(transcript):
     return 0, ""
 
 
+def runs_own_copy(project):
+    """A project that commits its own copy at .claude/hooks/ and registers it in its settings runs that copy instead. A copy
+    nothing registers (the old user-level one, seen from a session started in the home folder) doesn't count."""
+    own = project / ".claude" / "hooks" / "handoff-guard.py"
+    if not own.exists() or own.resolve() == Path(__file__).resolve():
+        return False
+    for name in ("settings.json", "settings.local.json"):
+        try:
+            if ".claude/hooks/handoff-guard.py" in (project / ".claude" / name).read_text():
+                return True
+        except OSError:
+            pass
+    return False
+
+
 def handoff_local(root, is_git):
     """handoff/ outside git or gitignored: handoffs there are never committed."""
     return not is_git or subprocess.run(["git", "-C", root, "check-ignore", "-q", "handoff/"], timeout=5).returncode == 0
@@ -182,9 +197,7 @@ def main():
         return
     event, sid = data.get("hook_event_name"), data.get("session_id", "unknown")
     root, is_git = project_root(data.get("cwd") or os.getcwd())
-    # A project that commits its own copy registers it at this path in its .claude/settings.json, so that copy runs instead.
-    own = Path(os.environ.get("CLAUDE_PROJECT_DIR") or root, ".claude", "hooks", "handoff-guard.py")
-    if own.exists() and own.resolve() != Path(__file__).resolve():
+    if runs_own_copy(Path(os.environ.get("CLAUDE_PROJECT_DIR") or root)):
         return
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     sfile = STATE_DIR / f"{sid}.json"
