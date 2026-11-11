@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check the handoff guard on sample sessions: each model's notices at the points its own window gives, subagents ignored,
-HANDOFF_AT=0 switching it off, and the pending block, save, update, KEEP pruning and paste-back working.
+HANDOFF_AT=0 switching it off, the settings rank, and the pending block, a saved (gitignored) or committed handoff, KEEP
+pruning, the update and the paste-back working.
 
 Usage: python3 check-handoff-guard.py [HOOK]
   HOOK  the handoff-guard.py to run (default: the one beside this file), e.g. a project's .claude/hooks/handoff-guard.py copy
@@ -43,12 +44,13 @@ def transcript(sid, model, tokens):
     return str(path)
 
 
-def run(event, sid, env=None, **fields):
-    """Run the hook on one event; return (its JSON output or None, stderr)."""
-    data = {"hook_event_name": event, "session_id": sid, "cwd": str(project), **fields}
+def run(event, sid, env=None, root=None, **fields):
+    """Run the hook on one event in root (default: the sample project); return (its JSON output or None, stderr)."""
+    root = root or project
+    data = {"hook_event_name": event, "session_id": sid, "cwd": str(root), **fields}
     base = {k: v for k, v in os.environ.items() if not k.startswith("HANDOFF_")}
     out = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(data), capture_output=True, text=True, timeout=30,
-                         env={**base, "HOME": str(home), "CLAUDE_PROJECT_DIR": str(project), **(env or {})})
+                         env={**base, "HOME": str(home), "CLAUDE_PROJECT_DIR": str(root), **(env or {})})
     return (json.loads(out.stdout) if out.stdout.strip() else None), out.stderr.strip()
 
 
@@ -100,13 +102,21 @@ ac, at, _ = points(400_000)
 out, err = run("UserPromptSubmit", "check-window", env={"HANDOFF_WINDOW": "400000"}, transcript_path=transcript("check-window", "claude-haiku-5-5", at))
 check(f"HANDOFF_WINDOW=400000: unnamed model's notice at {at}, autocompact {ac}", required(out, at, ac) and not err, err or context(out))
 
-# Settings rank: the project's local settings come before the user's, and a top-level window there beats the user's modelSettings.
+# Settings rank, as Claude Code merges them: in one file a modelSettings entry beats its top-level autoCompactWindow, and the
+# project's local settings come before its .claude/settings.json, which comes before the user's.
 (project / ".claude").mkdir()
+(project / ".claude" / "settings.json").write_text(json.dumps({"autoCompactWindow": 300_000, "modelSettings": {"claude-sonnet-5-5": {"autoCompactWindow": 180_000}}}))
+for label, model, window in (("project modelSettings 180000 beats its own top-level 300000 and the user's 150000", "claude-sonnet-5-5", 180_000),
+                             ("project top-level 300000 beats the user's modelSettings 335000", "claude-fable-5-2", 300_000)):
+    ac, at, _ = points(window)
+    sid = f"check-rank-{model}"
+    out, err = run("UserPromptSubmit", sid, transcript_path=transcript(sid, model, at))
+    check(f"{label}: {model}'s notice at {at}", required(out, at, ac) and not err, err or context(out))
 (project / ".claude" / "settings.local.json").write_text(json.dumps({"autoCompactWindow": 250_000}))
 ac, at, _ = points(250_000)
 out, err = run("UserPromptSubmit", "check-local", transcript_path=transcript("check-local", "claude-sonnet-5-5", at))
-check(f"settings.local.json autoCompactWindow 250000: Sonnet's notice at {at}", required(out, at, ac) and not err, err or context(out))
-(project / ".claude" / "settings.local.json").unlink()
+check(f"settings.local.json top-level 250000 beats the project's modelSettings: Sonnet's notice at {at}", required(out, at, ac) and not err, err or context(out))
+shutil.rmtree(project / ".claude")
 
 # Pending: other tools are denied, handoff work isn't; a saved handoff ends it and the oldest beyond KEEP (3) are pruned.
 sid = "check-claude-opus-5-5"
@@ -127,6 +137,25 @@ s = state(sid) or {}
 kept = sorted(p.name for p in handoffs.glob("handoff-*.md"))
 check("saved: status done, handoff recorded, newest 3 kept",
       context(out).startswith("Handoff saved") and s.get("status") == "done" and s.get("handoff") == str(new) and len(kept) == 3 and new.name in kept and not err, err or (context(out), s, kept))
+
+# Where handoff/ is committed: a commit touching it ends the pending state, and nothing is pruned.
+repo = home / "committed"
+subprocess.run(["git", "init", "-q", str(repo)], check=True)
+author = {"GIT_AUTHOR_NAME": "check", "GIT_AUTHOR_EMAIL": "check@example.invalid", "GIT_COMMITTER_NAME": "check", "GIT_COMMITTER_EMAIL": "check@example.invalid"}
+out, err = run("UserPromptSubmit", "check-committed", root=repo, transcript_path=transcript("check-committed", "claude-opus-5-5", opus_at))
+pending = required(out, opus_at, opus_ac) and not err
+(repo / "handoff").mkdir()
+names = [f"handoff-20260101-00000{n}.md" for n in range(1, 5)]
+for name in names:
+    (repo / "handoff" / name).write_text("# Handoff\n")
+for cmd in (["add", "handoff"], ["commit", "-q", "-m", "docs: handoff"]):
+    subprocess.run(["git", "-C", str(repo), *cmd], check=True, env={**os.environ, "HOME": str(home), **author})
+out, err = run("PostToolUse", "check-committed", root=repo, tool_name="Bash", tool_input={"command": "git commit"})
+s = state("check-committed") or {}
+kept = sorted(p.name for p in (repo / "handoff").glob("handoff-*.md"))
+check("committed: a commit touching handoff/ ends it, newest recorded, nothing pruned",
+      pending and context(out).startswith("Handoff committed") and s.get("status") == "done" and s.get("handoff") == str(repo / "handoff" / names[-1]) and kept == names and not err,
+      err or (context(out), s, kept))
 
 # Done and still not compacted at the update point: HANDOFF UPDATE REQUIRED, once.
 out, err = run("PostToolUse", sid, tool_name="Read", transcript_path=transcript(sid, "claude-opus-5-5", opus_up - 1))

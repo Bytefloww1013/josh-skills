@@ -1,6 +1,6 @@
 ---
 name: byte-handoff
-description: Write a short, bullet-only handoff of the current work to ./handoff/handoff-<timestamp>.md at the repo root and commit it (unless handoff/ is gitignored), so the context after the autocompact (33k below the session model's /autocompact window: ~302k at 335000) can pick up from it. Use when a HANDOFF REQUIRED or HANDOFF UPDATE REQUIRED notice appears, when context is nearly full, or when the user asks for a handoff.
+description: Write a short, bullet-only handoff of the current work to ./handoff/handoff-<timestamp>.md at the repo root and commit it (unless handoff/ is gitignored), so the context after the autocompact can pick up from it. Use when a HANDOFF REQUIRED or HANDOFF UPDATE REQUIRED notice appears, when context is nearly full, or when the user asks for a handoff.
 ---
 
 # byte-handoff

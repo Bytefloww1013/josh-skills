@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Handoff guard: 35k tokens before the autocompact (which fires 33k below the /autocompact window), make Claude write and commit
 a handoff, then paste that handoff back in after the compaction so the next context has the full picture. Every model gets it,
-each at the points its own window gives. check-handoff-guard.py, beside this file, runs it on sample sessions.
+each at the points its own window gives. byte-stack's hooks/check-handoff-guard.py runs it on sample sessions.
 
 One script for every event (dispatches on hook_event_name):
   UserPromptSubmit, PostToolUse  measure context; at the threshold mark the session "pending" and tell Claude to run the SKILL
