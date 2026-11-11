@@ -1,6 +1,6 @@
 ---
 name: review-team
-description: Use when the user asks for a code review by a fleet of specialized reviewer agents, wants multiple independent reviewer perspectives, or asks to run reviewers in single-pass or iterative fix-until-clean mode. Launches focused subagents for correctness, security, architecture, conventions, simplicity, UX, reliability, telemetry, testing, compatibility, and documentation review.
+description: Use when the user asks for a code review by a fleet of specialized reviewer agents, wants multiple independent reviewer perspectives, or asks to run reviewers in single-pass or iterative fix-until-clean mode. Launches focused subagents for correctness, security, architecture, conventions, simplicity, UX, reliability, telemetry, testing, compatibility, and documentation review, plus the repo's own reviewer agents.
 ---
 
 # Review Team
@@ -35,7 +35,9 @@ Specialist reviewers:
 - `reviewers/api-compatibility-reviewer.md`
 - `reviewers/documentation-dx-reviewer.md`
 
-Default to all reviewers when the user asks for the full team. For narrower requests, launch only the relevant reviewers.
+Default to all core and specialist reviewers when the user asks for the full team. For narrower requests, launch only the relevant ones.
+
+Repo reviewers: the repo's own reviewer agents, one per `.claude/agents/*-reviewer.md` file, if any. Each file's frontmatter `description` says which changes call for it. With the full team or a narrow request, in either mode, also launch every repo reviewer whose trigger the change meets.
 
 ## Launch Pattern
 
@@ -51,6 +53,8 @@ Add this wrapper to every reviewer prompt:
 ```text
 You are one reviewer in a fleet of independent code review agents. You cannot see the other reviewers. Stay strictly within your assigned role. Return only concrete, actionable findings with file and line references. If you find no issues in your area, say so clearly. Do not provide general commentary, praise, summaries, or duplicate concerns outside your mandate.
 ```
+
+Launch a repo reviewer as its own agent type, named by its file's frontmatter `name`: its file already holds its rules and its report's shape, so give it only the wrapper, the base the change is compared with, and the diff or changed files. If the session doesn't offer that agent type yet (it was added after the session started), launch a general-purpose subagent with the file's body as its prompt instead.
 
 Prefer running independent reviewers in parallel. Do not ask multiple reviewers to solve the same broad task in the same way; their reviewer prompt is their boundary.
 
