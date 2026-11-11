@@ -34,7 +34,7 @@
 
 Plan file: the plan is `<feature_name>-plan.md` at the repo root, its title naming the issue as `#<N>`. `.gitignore` keeps it out of git, and the code is committed per phase (`docs/directives/plans.md`). It lives only in the checkout that wrote it, so put what a reviewer or the next session needs from it in the PR body or a handoff. `/byte-gh-issue-claim` (user-invoked) writes a git-excluded `temp-gh-issue<N>-implementation.md` instead, and `docs/skills/byte-gh-issue-claim.md` says the repo's directives win over that default. verify-done reads the temp file when it exists, else the plan whose title names the issue. If `/byte-gh-issue-claim` ran, its `byte-gh-issue-claim #<N>` notes block must also be gone from `AGENTS.md`, or verify-done fails.
 
-Reviewers: the `review-team` skill runs specialist reviewer subagents when the user asks for a review. `.claude/agents/module-boundary-reviewer.md` (a change across modules, or a module and the kernel) and `.claude/agents/migration-reviewer.md` (a new migration or a changed `schema.ts`) exist, but no skill invokes them. Their descriptions say to call them on such a change, alone or from a larger review.
+Reviewers: the `review-team` skill runs specialist reviewer subagents when the user asks for a review. It also runs each reviewer agent in `.claude/agents/` whose description the change meets. When to call those agents yourself is the Review agents trigger in `SKILL.md`.
 
 **Reply:** what you built, the data shape and why, the quick-check and verify-done output, open decisions.
 
