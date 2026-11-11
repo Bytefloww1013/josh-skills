@@ -1,6 +1,6 @@
 ---
 name: byte-handoff
-description: Write a short, bullet-only handoff of the current work to ./handoff/handoff-<timestamp>.md at the repo root and commit it (unless handoff/ is gitignored), so the context after the autocompact (~302k on Opus with /autocompact 335000) can pick up from it. Use when a HANDOFF REQUIRED or HANDOFF UPDATE REQUIRED notice appears, when context is nearly full, or when the user asks for a handoff.
+description: Write a short, bullet-only handoff of the current work to ./handoff/handoff-<timestamp>.md at the repo root and commit it (unless handoff/ is gitignored), so the context after the autocompact (33k below the session model's /autocompact window: ~302k at 335000) can pick up from it. Use when a HANDOFF REQUIRED or HANDOFF UPDATE REQUIRED notice appears, when context is nearly full, or when the user asks for a handoff.
 ---
 
 # byte-handoff
@@ -59,11 +59,11 @@ Confirm it landed with `git log -1 --stat`. Skip the commit outside git, and whe
 
 ## 4. Carry on
 
-After the commit, say in one line which handoff was written, then go back to the task. The handoff-guard hook that sent the notice (the byte-stack plugin's `hooks/handoff-guard.py`, or the project's copy at `.claude/hooks/handoff-guard.py`; its docstring explains it) blocks other tools only until the handoff is committed (or saved, where step 3 skips the commit). When the autocompact runs (~302k: the 335000 window set by /autocompact minus the 33k "Autocompact buffer" in the /context panel), it pastes this handoff into the compacted context as "Previous context", next to the compact summary.
+After the commit, say in one line which handoff was written, then go back to the task. The handoff-guard hook that sent the notice (the byte-stack plugin's `hooks/handoff-guard.py`, or the project's copy at `.claude/hooks/handoff-guard.py`; its docstring explains it) blocks other tools only until the handoff is committed (or saved, where step 3 skips the commit). When the autocompact runs (the session model's window set by /autocompact minus the 33k "Autocompact buffer" in the /context panel: ~302k at 335000), it pastes this handoff into the compacted context as "Previous context", next to the compact summary.
 
 ## 5. Update it 6k before the autocompact
 
-If a HANDOFF UPDATE REQUIRED notice appears, the context reached the update point (296k with a 335000 window: 6k before the ~302k autocompact) without compacting, so the handoff is behind. Don't write a new file. Append to the same handoff:
+If a HANDOFF UPDATE REQUIRED notice appears, the context reached the update point (6k before the autocompact: 296k with a 335000 window) without compacting, so the handoff is behind. Don't write a new file. Append to the same handoff:
 
 ```markdown
 ## Since the handoff

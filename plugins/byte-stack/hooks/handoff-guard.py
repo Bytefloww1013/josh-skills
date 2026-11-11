@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Handoff guard: 35k tokens before the autocompact (which fires 33k below the /autocompact window), make Claude write and commit
-a handoff, then paste that handoff back in after the compaction so the next context has the full picture.
+a handoff, then paste that handoff back in after the compaction so the next context has the full picture. Every model gets it,
+each at the points its own window gives. check-handoff-guard.py, beside this file, runs it on sample sessions.
 
 One script for every event (dispatches on hook_event_name):
   UserPromptSubmit, PostToolUse  measure context; at the threshold mark the session "pending" and tell Claude to run the SKILL
@@ -23,14 +24,16 @@ import json, os, re, subprocess, sys, time
 from pathlib import Path
 
 # Real autocompact point, as Claude Code computes it (and the /context panel shows as "Autocompact buffer" = 33k):
-# window - min(maxOutputTokens, 20000) summary reserve - 13000 buffer. Seen in the transcripts: window 200k fired at ~167k,
-# 293k at ~260k. The window is read from the settings `/autocompact <n>` writes (modelSettings.<model>.autoCompactWindow), so the
-# thresholds follow it: 335000 (Oct 27 2026) -> autocompact 302000, handoff 267000, update 296000.
-DEFAULT_WINDOW = int(os.environ.get("HANDOFF_WINDOW", 335_000))  # when no settings file names the model's window
+# window - min(maxOutputTokens, 20000) summary reserve - 13000 buffer. Seen in the transcripts: window 150k fired at ~117k,
+# 200k at ~167k, 293k at ~260k, 335k at ~302k. Each model's window is read from the settings `/autocompact <n>` writes
+# (modelSettings.<model>.autoCompactWindow), so the thresholds follow the session's model: 335000 -> autocompact 302000,
+# handoff 267000, update 296000; 150000 -> 117000, 82000, 111000.
+# With no setting, Claude Code (2.1.322) uses the model's context window: 1M for current models, but 200000 for a model it doesn't
+# recognize or an account without 1M context. 200000 is the smallest, so the handoff never lands past a real autocompact.
+DEFAULT_WINDOW = int(os.environ.get("HANDOFF_WINDOW", 200_000))  # when no settings file names the model's window
 SUMMARY_RESERVE, BUFFER = 20_000, 13_000
 HANDOFF_MARGIN = 35_000  # room to write, check and save the handoff before the autocompact
 UPDATE_MARGIN = 6_000  # still not compacted this close to it: append what was done since
-MODEL_MATCH = "opus"  # only Opus gets the handoff
 # The skill the notices name: the plugin's own, namespaced, when this file is in the plugin (its parent folder holds
 # .claude-plugin/), else the project's copy. Not `handoff`, which a user-level skill of that name would outrank.
 SKILL = "byte-stack:byte-handoff" if (Path(__file__).resolve().parent.parent / ".claude-plugin").is_dir() else "byte-handoff"
@@ -223,11 +226,11 @@ def main():
     if measure and event in ("UserPromptSubmit", "PostToolUse"):
         tokens, model = context_tokens(data.get("transcript_path", ""))
         autocompact, handoff_at, update_at = thresholds(model, root)
-        if state["status"] == "done" and tokens >= update_at and MODEL_MATCH in model:
+        if state["status"] == "done" and tokens >= update_at:
             state.update(status="pending", since=time.time(), updated=True, at=update_at)
             sfile.write_text(json.dumps(state))
             return say(event, f"HANDOFF UPDATE REQUIRED: context is {tokens} tokens and autocompact (at {autocompact}) hasn't run yet. Pause at a safe point and append a \"## Since the handoff\" section to {state['handoff']}: every action completed since it was written ({SKILL} skill, step 5), with Next steps and Watch out corrected if they changed. Commit only that file, unless handoff/ is gitignored. Other tools are blocked until then.")
-        if state["status"] == "off" and tokens >= handoff_at and MODEL_MATCH in model:
+        if state["status"] == "off" and tokens >= handoff_at:
             sfile.write_text(json.dumps({"status": "pending", "since": time.time(), "root": root, "at": handoff_at}))
             return say(event, f"HANDOFF REQUIRED: context is {tokens} tokens; autocompact runs at {autocompact}. Pause the current task at a safe point and run the {SKILL} skill: write {root}/handoff/handoff-<YYYYMMDD-HHMMSS>.md, check it and commit only that file (skip the commit if handoff/ is gitignored). Other tools are blocked until then; afterwards carry on with the task.")
 

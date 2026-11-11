@@ -1,5 +1,5 @@
 {
-  "description": "Handoff guard: on Opus, asks for a byte-handoff 35k tokens before the autocompact and pastes it back in after it. Does nothing in a project with its own .claude/hooks/handoff-guard.py.",
+  "description": "Handoff guard: on every model, asks for a byte-handoff 35k tokens before the autocompact and pastes it back in after it. Does nothing in a project with its own .claude/hooks/handoff-guard.py.",
   "hooks": {
     "SessionStart": [
       {
