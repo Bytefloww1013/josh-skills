@@ -11,8 +11,12 @@ One script for every event (dispatches on hook_event_name):
                                  until autocompact. An ignored or non-git handoff/ is pruned to the newest KEEP files then.
   UserPromptSubmit, PostToolUse  done and still not compacted at the update point: pending again (once) until the work since the
                                  handoff is appended to it under "## Since the handoff" and committed
-  SessionStart(compact)          paste the recorded handoff into the compacted context as "Previous context", re-arm the guard
-The session_id stays the same across autocompact, so the state file links the handoff to the compaction.
+  SessionStart(compact)          paste the recorded handoff into the compacted context as "Previous context", if the compaction
+                                 is surely the main thread's (a subagent's compaction runs it too; see main_compacting)
+  UserPromptSubmit, PostToolUse  the main transcript shows a compaction since the guard armed: re-arm it (delete the state), and
+                                 paste the handoff if SessionStart didn't
+Context size is the last main-thread response's, counting only its last model iteration (an advisor call adds more; see
+usage_tokens). The session_id stays the same across autocompact, so the state file links the handoff to the compaction.
 Subagents (events with an agent_id) are ignored: never measured, blocked or counted as the handoff, though they share the session_id.
 State: ~/.claude/handoff-state/<session_id>.json. Escape hatch: delete it, or set HANDOFF_AT=0 to switch the guard off.
 The byte-stack plugin (Bytefloww1013/josh-skills) ships this file as hooks/handoff-guard.py, registered in its hooks/hooks.json,
@@ -21,6 +25,7 @@ so every project that enables the plugin has the guard. A project may also commi
 plugins). The plugin's copy then does nothing in that project, so one guard runs. SKILL follows from where this file is.
 """
 import json, os, re, subprocess, sys, time
+from datetime import datetime
 from pathlib import Path
 
 # Real autocompact point, as Claude Code computes it (and the /context panel shows as "Autocompact buffer" = 33k):
@@ -80,26 +85,65 @@ def thresholds(model, root):
     return autocompact, handoff, update
 
 
-def context_tokens(transcript):
-    """(context size, model) from the last main-thread assistant usage; size 0 if a compaction came after it."""
+def usage_tokens(u):
+    """Context size of one API response. A response that called a server tool such as the advisor is several model iterations
+    (message, advisor_message, message): the top-level fields add them all up, about twice the real context (a 172k context read
+    as 352k, Nov 12 2026), so the size is the last "message" iteration's. Without iterations, the top-level fields."""
+    its = [i for i in (u.get("iterations") or []) if isinstance(i, dict) and i.get("type") == "message"]
+    u = its[-1] if its else u
+    return u.get("input_tokens", 0) + u.get("cache_creation_input_tokens", 0) + u.get("cache_read_input_tokens", 0)
+
+
+def epoch(stamp):
+    try:
+        return datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def read_transcript(transcript, sidechain=False):
+    """(context size, model, time of the newest compaction) from a transcript's tail: the size is the last assistant usage after
+    that compaction (0 if none came after it). The main transcript holds only the main thread's compactions: a subagent's go to
+    its own file under <session>/subagents/, read with sidechain=True (its entries are marked isSidechain)."""
     try:
         with open(transcript, "rb") as f:
             f.seek(0, 2)
             f.seek(max(0, f.tell() - 4_000_000))
             lines = f.read().decode("utf-8", "replace").splitlines()
-    except OSError:
-        return 0, ""
+    except (OSError, TypeError):
+        return 0, "", None
+    tokens, model = None, ""
     for line in reversed(lines):
         try:
             e = json.loads(line)
         except ValueError:
             continue
         if e.get("subtype") == "compact_boundary":
-            return 0, ""
-        u = (e.get("message") or {}).get("usage") if e.get("type") == "assistant" and not e.get("isSidechain") else None
-        if u:
-            return u.get("input_tokens", 0) + u.get("cache_creation_input_tokens", 0) + u.get("cache_read_input_tokens", 0), e["message"].get("model", "")
-    return 0, ""
+            return tokens or 0, model, epoch(e.get("timestamp"))
+        u = (e.get("message") or {}).get("usage") if e.get("type") == "assistant" and (sidechain or not e.get("isSidechain")) else None
+        if u and tokens is None:
+            tokens, model = usage_tokens(u), e["message"].get("model", "")
+    return tokens or 0, model, None
+
+
+def near_autocompact(transcript, root, sidechain=False):
+    """The transcript's thread has not compacted since its last usage, which is within UPDATE_MARGIN of its autocompact point:
+    it is the one compacting now, or will be on its next request."""
+    tokens, model, _ = read_transcript(transcript, sidechain)
+    return tokens > 0 and tokens >= thresholds(model, root)[0] - UPDATE_MARGIN
+
+
+def main_compacting(transcript, root):
+    """Whether a SessionStart(compact) is the main thread's. Claude Code (2.1.322) runs SessionStart(compact) for a subagent's
+    compaction too, with the same session_id and transcript_path and no agent_id, so the event can't say; and the main transcript
+    gets its compact_boundary only after the hooks have run. So: the main thread is at its autocompact point and no subagent
+    written in the last 10 minutes is at its own. Both or neither: not sure, so False (the next main-thread event finds the
+    boundary and pastes then)."""
+    if not near_autocompact(transcript, root):
+        return False
+    subagents = Path(str(transcript)).with_suffix("") / "subagents"
+    recent = [f for f in subagents.glob("*.jsonl") if f.stat().st_mtime > time.time() - 600] if subagents.is_dir() else []
+    return not any(near_autocompact(f, root, sidechain=True) for f in recent)
 
 
 def runs_own_copy(project):
@@ -206,16 +250,36 @@ def main():
     sfile = STATE_DIR / f"{sid}.json"
     state = json.loads(sfile.read_text()) if sfile.exists() else {"status": "off"}
 
+    transcript = data.get("transcript_path", "")
     if event == "SessionStart":
-        if data.get("source") == "compact":
-            sfile.unlink(missing_ok=True)  # re-arm for the next threshold
+        # A subagent's compaction runs this too (see main_compacting), so the state stays: the next main-thread event re-arms
+        # the guard once the main transcript shows the compaction. The handoff is pasted now only if the compaction is surely
+        # the main thread's, so it never lands in a subagent's context; otherwise it is pasted at that next event.
+        if data.get("source") == "compact" and state["status"] != "off":
             path = state.get("handoff")
-            if path and Path(path).exists():  # also mid-update: the handoff as first committed is still good
+            if path and Path(path).exists() and main_compacting(transcript, root):  # also mid-update: the first version is good
+                state["pasted"] = time.time()
+                sfile.write_text(json.dumps(state))
                 say(event, resume_text(path))
         for old in STATE_DIR.glob("*"):  # tidy state from sessions that ended
             if old.is_file() and old.stat().st_mtime < time.time() - 3 * 86400:
                 old.unlink(missing_ok=True)
         return
+
+    # One read of the transcript per event; PreToolUse reads it only while pending, the only time it acts.
+    scanned = event in ("UserPromptSubmit", "PostToolUse") or (event == "PreToolUse" and state["status"] == "pending")
+    tokens, model, compacted = read_transcript(transcript) if scanned else (0, "", None)
+    if state["status"] != "off" and compacted and compacted > state.get("armed", state.get("since", 0)):
+        # The main thread compacted since the guard armed: re-arm it, and paste the handoff unless SessionStart did for this
+        # compaction (its boundary is stamped just before the SessionStart hooks run). PreToolUse lets the tool through and
+        # leaves both to the PostToolUse after it.
+        if event == "PreToolUse":
+            return
+        sfile.unlink(missing_ok=True)
+        path, pasted = state.get("handoff"), state.get("pasted")
+        if path and Path(path).exists() and not (pasted and compacted - 30 <= pasted <= compacted + 120):
+            return say(event, resume_text(path))
+        state = {"status": "off"}
 
     if event == "PreToolUse":
         if state["status"] == "pending":
@@ -224,14 +288,14 @@ def main():
 
     measure = state["status"] == "off" or (state["status"] == "done" and not state.get("updated"))
     if measure and event in ("UserPromptSubmit", "PostToolUse"):
-        tokens, model = context_tokens(data.get("transcript_path", ""))
         autocompact, handoff_at, update_at = thresholds(model, root)
         if state["status"] == "done" and tokens >= update_at:
             state.update(status="pending", since=time.time(), updated=True, at=update_at)
             sfile.write_text(json.dumps(state))
             return say(event, f"HANDOFF UPDATE REQUIRED: context is {tokens} tokens and autocompact (at {autocompact}) hasn't run yet. Pause at a safe point and append a \"## Since the handoff\" section to {state['handoff']}: every action completed since it was written ({SKILL} skill, step 5), with Next steps and Watch out corrected if they changed. Commit only that file, unless handoff/ is gitignored. Other tools are blocked until then.")
         if state["status"] == "off" and tokens >= handoff_at:
-            sfile.write_text(json.dumps({"status": "pending", "since": time.time(), "root": root, "at": handoff_at}))
+            now = time.time()
+            sfile.write_text(json.dumps({"status": "pending", "since": now, "armed": now, "root": root, "at": handoff_at}))
             return say(event, f"HANDOFF REQUIRED: context is {tokens} tokens; autocompact runs at {autocompact}. Pause the current task at a safe point and run the {SKILL} skill: write {root}/handoff/handoff-<YYYYMMDD-HHMMSS>.md, check it and commit only that file (skip the commit if handoff/ is gitignored). Other tools are blocked until then; afterwards carry on with the task.")
 
     local = state["status"] == "pending" and event == "PostToolUse" and handoff_local(root, is_git)

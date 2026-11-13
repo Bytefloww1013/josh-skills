@@ -11,6 +11,7 @@ settings shaped like the real ones (modelSettings: Sonnet 150000, Opus and Fable
 so no live session's state or settings are read or changed. Prints one PASS/FAIL line per check; exits 0 only if all pass.
 """
 import json, os, shutil, subprocess, sys, tempfile, time
+from datetime import datetime, timezone
 from pathlib import Path
 
 if sys.argv[1:2] in (["-h"], ["--help"]):
@@ -36,12 +37,40 @@ def points(window):
     return autocompact, autocompact - 35_000, autocompact - 6_000
 
 
-def transcript(sid, model, tokens):
-    path = home / f"{sid}.jsonl"
-    lines = [{"type": "user", "message": {"role": "user", "content": "go on"}},
-             {"type": "assistant", "message": {"model": model, "usage": {"input_tokens": 3, "cache_creation_input_tokens": 1000, "cache_read_input_tokens": tokens - 1003, "output_tokens": 50}}}]
-    path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+def usage(tokens):
+    return {"input_tokens": 3, "cache_creation_input_tokens": 1000, "cache_read_input_tokens": tokens - 1003, "output_tokens": 50}
+
+
+def reply(model, tokens, sidechain=False):
+    return {"type": "assistant", "isSidechain": sidechain, "message": {"model": model, "usage": usage(tokens)}}
+
+
+def advisor_reply(model, before, after, read):
+    """A response that called the advisor, shaped like Claude Code 2.1.322's: the top-level fields add up both message
+    iterations (before + after), the advisor's own read is a separate iteration."""
+    its = [{**usage(before), "type": "message"}, {"input_tokens": read, "output_tokens": 9000, "type": "advisor_message", "model": "claude-fable-5-2"}, {**usage(after), "type": "message"}]
+    total = {"input_tokens": 6, "cache_creation_input_tokens": 2000, "cache_read_input_tokens": before + after - 2006, "output_tokens": 100}
+    return {"type": "assistant", "message": {"model": model, "usage": {**total, "iterations": its}}}
+
+
+def boundary(pre):
+    stamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return {"type": "system", "subtype": "compact_boundary", "timestamp": stamp, "compactMetadata": {"trigger": "auto", "preTokens": pre}}
+
+
+def write(path, entries):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(e) + "\n" for e in [{"type": "user", "message": {"role": "user", "content": "go on"}}, *entries]))
     return str(path)
+
+
+def transcript(sid, model, tokens, *more):
+    return write(home / f"{sid}.jsonl", [reply(model, tokens), *more])
+
+
+def subagent(sid, model, tokens):
+    """A subagent's own transcript, where Claude Code keeps it: <session>/subagents/agent-<id>.jsonl, entries marked isSidechain."""
+    return write(home / sid / "subagents" / "agent-a1.jsonl", [reply(model, tokens, sidechain=True)])
 
 
 def run(event, sid, env=None, root=None, **fields):
@@ -165,10 +194,56 @@ check(f"HANDOFF_UPDATE_AT={opus_up + 1000}: no update notice at {opus_up}", out 
 out, err = run("PostToolUse", sid, tool_name="Read", transcript_path=transcript(sid, "claude-opus-5-5", opus_up))
 check(f"done: HANDOFF UPDATE REQUIRED at {opus_up}", context(out).startswith("HANDOFF UPDATE REQUIRED") and f"(at {opus_ac})" in context(out) and (state(sid) or {}).get("updated") is True, err or context(out))
 
-# The autocompact: SessionStart(compact) pastes the handoff back in and deletes the state, which re-arms the guard.
-out, err = run("SessionStart", sid, source="compact")
-check("compact: handoff pasted back as Previous context, state cleared",
+# The main thread's autocompact: SessionStart(compact) pastes the handoff back in; the state stays until the next main-thread
+# event finds the compaction in the main transcript, which re-arms the guard without pasting it twice.
+out, err = run("SessionStart", sid, source="compact", transcript_path=transcript(sid, "claude-opus-5-5", opus_up))
+s = state(sid) or {}
+check("main compact: handoff pasted back as Previous context, state kept until the transcript shows it",
+      context(out).startswith("Previous context") and "the sample task" in context(out) and s.get("pasted") and not err, err or context(out) or s)
+compacted = transcript(sid, "claude-opus-5-5", opus_up, boundary(opus_up + 2000))
+out, err = run("PreToolUse", sid, tool_name="Edit", tool_input={"file_path": str(project / "app.py")}, transcript_path=compacted)
+check("main compact: the pending update no longer blocks once the transcript shows the compaction", out is None and not err, err or out)
+out, err = run("PostToolUse", sid, tool_name="Read", transcript_path=transcript(sid, "claude-opus-5-5", opus_up, boundary(opus_up + 2000), reply("claude-opus-5-5", 30_000)))
+check("main compact: next event re-arms the guard (state cleared) without a second paste", out is None and state(sid) is None and not err, err or context(out))
+
+
+def done_session(sid):
+    """A session whose handoff is saved (status done) at the Opus handoff point."""
+    run("UserPromptSubmit", sid, transcript_path=transcript(sid, "claude-opus-5-5", opus_at))
+    (handoffs / f"handoff-{sid}.md").write_text("# Handoff\n- Goal: the sample task\n")
+    run("PostToolUse", sid, tool_name="Write", transcript_path=transcript(sid, "claude-opus-5-5", opus_at))
+    return (state(sid) or {}).get("status") == "done"
+
+
+# A subagent's compaction runs SessionStart(compact) with the main thread's session_id and transcript_path and no agent_id
+# (Claude Code 2.1.322): no paste into the subagent and the main thread's state kept (Nov 12 2026 it was deleted, and the
+# main handoff pasted into a worker). The main thread's own compaction later still gets the handoff.
+sid = "check-subagent-compact"
+ok = done_session(sid)
+subagent(sid, "claude-opus-5-5", opus_ac + 500)
+out, err = run("SessionStart", sid, source="compact", transcript_path=transcript(sid, "claude-opus-5-5", opus_at + 13_000))
+check("subagent compact: no paste, main thread's state kept", ok and out is None and (state(sid) or {}).get("status") == "done" and not err, err or context(out) or state(sid))
+out, err = run("SessionStart", sid, source="compact", transcript_path=transcript(sid, "claude-opus-5-5", opus_up + 1000))
+check("main and a subagent both at their autocompact: not sure whose, so no paste yet", out is None and (state(sid) or {}).get("status") == "done" and not err, err or context(out))
+out, err = run("PostToolUse", sid, tool_name="Read", transcript_path=transcript(sid, "claude-opus-5-5", opus_up + 1000, boundary(opus_ac + 1000), reply("claude-opus-5-5", 30_000)))
+check("main compact after them: next event pastes the handoff and re-arms the guard",
       context(out).startswith("Previous context") and "the sample task" in context(out) and state(sid) is None and not err, err or context(out))
+
+# Compacted while a handoff is still pending (none written): the guard re-arms, nothing to paste, tools unblocked.
+sid = "check-pending-compact"
+run("UserPromptSubmit", sid, transcript_path=transcript(sid, "claude-opus-5-5", opus_at))
+after = transcript(sid, "claude-opus-5-5", opus_at, boundary(opus_ac), reply("claude-opus-5-5", 30_000))
+out, err = run("PreToolUse", sid, tool_name="Edit", tool_input={"file_path": str(project / "app.py")}, transcript_path=after)
+out2, err2 = run("PostToolUse", sid, tool_name="Edit", transcript_path=after)
+check("pending compact: tool allowed, guard re-armed, nothing pasted", out is None and out2 is None and state(sid) is None and not (err or err2), err or err2 or out or out2)
+
+# An advisor call: the response's top-level usage adds up both its message iterations (about twice the context); the guard
+# counts the last one only (Nov 12 2026: a 172k context read as 352k fired the handoff early).
+sid = "check-advisor"
+out, err = run("UserPromptSubmit", sid, transcript_path=transcript(sid, "claude-opus-5-5", 1000, advisor_reply("claude-opus-5-5", 172_000, 175_000, 177_000)))
+check("advisor: 175k context (347k summed) gives no notice", out is None and state(sid) is None and not err, err or context(out))
+out, err = run("UserPromptSubmit", sid, transcript_path=transcript(sid, "claude-opus-5-5", 1000, advisor_reply("claude-opus-5-5", opus_at - 4000, opus_at, 200_000)))
+check(f"advisor: HANDOFF REQUIRED at {opus_at} from the last iteration", required(out, opus_at, opus_ac) and not err, err or context(out))
 
 if not failed:
     shutil.rmtree(home)  # kept on a failure, to look at
