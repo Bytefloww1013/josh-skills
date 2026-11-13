@@ -6,9 +6,9 @@ each at the points its own window gives. byte-stack's hooks/check-handoff-guard.
 One script for every event (dispatches on hook_event_name):
   UserPromptSubmit, PostToolUse  measure context; at the threshold mark the session "pending" and tell Claude to run the SKILL
   PreToolUse                     while pending, only handoff work is allowed
-  PostToolUse                    while pending, a commit touching handoff/ (or, where handoff/ is gitignored or outside git, a
-                                 new or changed file there) marks it "done" and records the handoff path; work then carries on
-                                 until autocompact. An ignored or non-git handoff/ is pruned to the newest KEEP files then.
+  PostToolUse                    while pending, a commit of this session's handoff (or, where handoff/ is gitignored or outside
+                                 git, a new or changed one) marks it "done" and records its path; work then carries on until
+                                 autocompact. An ignored or non-git handoff/ is pruned to the newest KEEP files then.
   UserPromptSubmit, PostToolUse  done and still not compacted at the update point: pending again (once) until the work since the
                                  handoff is appended to it under "## Since the handoff" and committed
   SessionStart(compact)          paste the recorded handoff into the compacted context as "Previous context", if the compaction
@@ -18,6 +18,10 @@ One script for every event (dispatches on hook_event_name):
 Context size is the last main-thread response's, counting only its last model iteration (an advisor call adds more; see
 usage_tokens). The session_id stays the same across autocompact, so the state file links the handoff to the compaction.
 Subagents (events with an agent_id) are ignored: never measured, blocked or counted as the handoff, though they share the session_id.
+A handoff is this session's only if its name ends with the session tag (handoff-<YYYYMMDD-HHMMSS>-<first 8 of session_id>.md, the
+name the notices give) or this session's own Write or Edit made it. handoff/ is shared by every session in the checkout, so the
+newest file there is often another session's (Nov 13 2026: a parallel session's handoff-20261113-003000.md was recorded, and
+pasted back, in place of this session's 001459).
 State: ~/.claude/handoff-state/<session_id>.json. Escape hatch: delete it, or set HANDOFF_AT=0 to switch the guard off.
 The byte-stack plugin (Bytefloww1013/josh-skills) ships this file as hooks/handoff-guard.py, registered in its hooks/hooks.json,
 so every project that enables the plugin has the guard. A project may also commit a byte-identical copy at
@@ -166,22 +170,63 @@ def handoff_local(root, is_git):
     return not is_git or subprocess.run(["git", "-C", root, "check-ignore", "-q", "handoff/"], timeout=5).returncode == 0
 
 
-def handoff_changed_since(root, local, since):
-    d = Path(root) / "handoff"
-    if not local:
-        out = subprocess.run(["git", "-C", root, "log", "-1", "--format=%ct", "--", "handoff"], capture_output=True, text=True, timeout=5)
-        return out.stdout.strip().isdigit() and int(out.stdout) >= int(since)
-    return any(p.stat().st_mtime >= since for p in d.glob("handoff-*.md"))
+def session_tag(sid):
+    """The suffix that marks a handoff as this session's: the session_id's first 8 letters or digits."""
+    return re.sub(r"[^0-9A-Za-z]", "", sid)[:8] or "unknown"
+
+
+def in_handoff_dir(root, path):
+    try:
+        p = Path(path).resolve()
+    except (OSError, TypeError, ValueError):
+        return False
+    return p.parent == Path(root, "handoff").resolve() and re.fullmatch(r"handoff-.+\.md", p.name) is not None
+
+
+def own_handoffs(root, sid, state):
+    """This session's handoffs: the one it already recorded (only that one while an update is pending), else every file named
+    with its tag plus the last one its own Write or Edit made. Never another session's, whatever its name or time."""
+    if state.get("handoff"):
+        return [Path(state["handoff"])]
+    files = set((Path(root) / "handoff").glob(f"handoff-*-{session_tag(sid)}.md"))
+    if state.get("wrote"):
+        files.add(Path(state["wrote"]))
+    return [f for f in files if f.is_file()]
+
+
+def changed_at(root, local, path):
+    """When the handoff last changed: its mtime where handoff/ is never committed, else its last commit's time (None if none)."""
+    if local:
+        return path.stat().st_mtime
+    out = subprocess.run(["git", "-C", root, "log", "-1", "--format=%ct", "--", str(path)], capture_output=True, text=True, timeout=5)
+    return int(out.stdout) if out.stdout.strip().isdigit() else None
+
+
+def own_handoff_since(root, local, since, files):
+    """The newest of files saved (or committed) since the guard went pending, or None."""
+    times = [(t, str(f)) for f in files if (t := changed_at(root, local, f)) is not None and t >= (since if local else int(since))]
+    return max(times)[1] if times else None
+
+
+def live_handoffs():
+    """Handoffs some session's state still points to: pasted back at its autocompact, so pruning must not take them."""
+    live = set()
+    for f in STATE_DIR.glob("*.json"):
+        try:
+            s = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        live.update(str(Path(s[k]).resolve()) for k in ("handoff", "wrote") if s.get(k))
+    return live
 
 
 def prune(root):
-    for old in sorted((Path(root) / "handoff").glob("handoff-*.md"))[:-KEEP]:  # names sort by their timestamp
-        old.unlink(missing_ok=True)
-
-
-def newest_handoff(root):
-    files = sorted((Path(root) / "handoff").glob("handoff-*.md"))
-    return str(files[-1]) if files else None
+    """Keep the newest KEEP handoffs by mtime (a name's timestamp can be wrong or another session's), and any a session still needs."""
+    files = sorted((Path(root) / "handoff").glob("handoff-*.md"), key=lambda p: p.stat().st_mtime)
+    live = live_handoffs()
+    for old in files[:-KEEP]:
+        if str(old.resolve()) not in live:
+            old.unlink(missing_ok=True)
 
 
 def say(event, text, **extra):
@@ -224,7 +269,7 @@ def pre_tool(data, state, root):
         return
     if state.get("updated"):
         return deny(f"Context passed {state.get('at', 'the update')} tokens: only handoff work is allowed now. Append \"## Since the handoff\" to {state['handoff']} (the {SKILL} skill, step 5) and commit it unless handoff/ is gitignored, then carry on with the task.")
-    deny(f"Context passed {state.get('at', 'the handoff')} tokens: only handoff work is allowed now. Run the {SKILL} skill (write {root}/handoff/handoff-<timestamp>.md, check it, commit it unless handoff/ is gitignored), then carry on with the task.")
+    deny(f"Context passed {state.get('at', 'the handoff')} tokens: only handoff work is allowed now. Run the {SKILL} skill (write {root}/handoff/handoff-<YYYYMMDD-HHMMSS>-{session_tag(data.get('session_id', 'unknown'))}.md, check it, commit it unless handoff/ is gitignored), then carry on with the task.")
 
 
 def resume_text(path):
@@ -296,15 +341,23 @@ def main():
         if state["status"] == "off" and tokens >= handoff_at:
             now = time.time()
             sfile.write_text(json.dumps({"status": "pending", "since": now, "armed": now, "root": root, "at": handoff_at}))
-            return say(event, f"HANDOFF REQUIRED: context is {tokens} tokens; autocompact runs at {autocompact}. Pause the current task at a safe point and run the {SKILL} skill: write {root}/handoff/handoff-<YYYYMMDD-HHMMSS>.md, check it and commit only that file (skip the commit if handoff/ is gitignored). Other tools are blocked until then; afterwards carry on with the task.")
+            return say(event, f"HANDOFF REQUIRED: context is {tokens} tokens; autocompact runs at {autocompact}. Pause the current task at a safe point and run the {SKILL} skill: write {root}/handoff/handoff-<YYYYMMDD-HHMMSS>-{session_tag(sid)}.md (that exact suffix marks it as this session's), check it and commit only that file (skip the commit if handoff/ is gitignored). Other tools are blocked until then; afterwards carry on with the task.")
 
-    local = state["status"] == "pending" and event == "PostToolUse" and handoff_local(root, is_git)
-    if state["status"] == "pending" and event == "PostToolUse" and handoff_changed_since(root, local, state["since"]):
-        state.update(status="done", handoff=state.get("handoff") or newest_handoff(root))
-        sfile.write_text(json.dumps(state))
-        if local:
-            prune(root)
-        return say(event, f"Handoff {'update ' if state.get('updated') else ''}{'saved' if local else 'committed'} ({state['handoff']}). Tools are unblocked: carry on with the task. After the autocompact the handoff is pasted back in as \"Previous context\".")
+    if state["status"] == "pending" and event == "PostToolUse":
+        # This session's own Write or Edit of a handoff marks that file as its own, whatever it is named.
+        written = (data.get("tool_input") or {}).get("file_path")
+        if data.get("tool_name") in ("Write", "Edit", "MultiEdit") and written and in_handoff_dir(root, written) and not state.get("handoff"):
+            state["wrote"] = str(Path(written).resolve())
+            sfile.write_text(json.dumps(state))
+        local = handoff_local(root, is_git)
+        path = own_handoff_since(root, local, state["since"], own_handoffs(root, sid, state))
+        if path:
+            state.update(status="done", handoff=path)
+            state.pop("wrote", None)
+            sfile.write_text(json.dumps(state))
+            if local:
+                prune(root)
+            return say(event, f"Handoff {'update ' if state.get('updated') else ''}{'saved' if local else 'committed'} ({state['handoff']}). Tools are unblocked: carry on with the task. After the autocompact the handoff is pasted back in as \"Previous context\".")
 
     if state["status"] == "pending" and event == "UserPromptSubmit":
         say(event, "Reminder: the handoff is still required; finish it before other work.")

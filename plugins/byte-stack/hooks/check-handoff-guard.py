@@ -3,6 +3,8 @@
 HANDOFF_AT=0 switching it off, the settings rank, and the pending block, a saved (gitignored) or committed handoff, KEEP
 pruning, the update and the paste-back working.
 
+Also: handoffs from other sessions sharing handoff/ are never recorded, end the pending state or get pruned while live.
+
 Usage: python3 check-handoff-guard.py [HOOK]
   HOOK  the handoff-guard.py to run (default: the one beside this file), e.g. a project's .claude/hooks/handoff-guard.py copy
 
@@ -92,6 +94,10 @@ def state(sid):
     return json.loads(f.read_text()) if f.exists() else None
 
 
+def tag(sid):
+    return "".join(c for c in sid if c.isalnum())[:8]
+
+
 def required(out, tokens, autocompact):
     text = context(out)
     return text.startswith("HANDOFF REQUIRED") and f"context is {tokens} tokens" in text and f"autocompact runs at {autocompact}." in text and "byte-handoff skill" in text
@@ -174,16 +180,25 @@ author = {"GIT_AUTHOR_NAME": "check", "GIT_AUTHOR_EMAIL": "check@example.invalid
 out, err = run("UserPromptSubmit", "check-committed", root=repo, transcript_path=transcript("check-committed", "claude-opus-5-5", opus_at))
 pending = required(out, opus_at, opus_ac) and not err
 (repo / "handoff").mkdir()
-names = [f"handoff-20260101-00000{n}.md" for n in range(1, 5)]
-for name in names:
-    (repo / "handoff" / name).write_text("# Handoff\n")
-for cmd in (["add", "handoff"], ["commit", "-q", "-m", "docs: handoff"]):
-    subprocess.run(["git", "-C", str(repo), *cmd], check=True, env={**os.environ, "HOME": str(home), **author})
+names = [f"handoff-20260101-00000{n}.md" for n in range(1, 4)] + [f"handoff-20260101-000000-{tag('check-committed')}.md"]
+
+
+def commit(*files):
+    for f in files:
+        (repo / "handoff" / f).write_text("# Handoff\n")
+    for cmd in (["add", "handoff"], ["commit", "-q", "-m", "docs: handoff"]):
+        subprocess.run(["git", "-C", str(repo), *cmd], check=True, env={**os.environ, "HOME": str(home), **author})
+
+
+commit(*names[:3])  # other sessions' handoffs, committed while this one is pending
+out, err = run("PostToolUse", "check-committed", root=repo, tool_name="Bash", tool_input={"command": "git commit"})
+check("committed: another session's handoff commit leaves this one pending", out is None and (state("check-committed") or {}).get("status") == "pending" and not err, err or context(out))
+commit(names[3])
 out, err = run("PostToolUse", "check-committed", root=repo, tool_name="Bash", tool_input={"command": "git commit"})
 s = state("check-committed") or {}
 kept = sorted(p.name for p in (repo / "handoff").glob("handoff-*.md"))
-check("committed: a commit touching handoff/ ends it, newest recorded, nothing pruned",
-      pending and context(out).startswith("Handoff committed") and s.get("status") == "done" and s.get("handoff") == str(repo / "handoff" / names[-1]) and kept == names and not err,
+check("committed: this session's tagged commit ends it, its own file recorded (not the newest name), nothing pruned",
+      pending and context(out).startswith("Handoff committed") and s.get("status") == "done" and s.get("handoff") == str(repo / "handoff" / names[3]) and kept == sorted(names) and not err,
       err or (context(out), s, kept))
 
 # Done and still not compacted at the update point: HANDOFF UPDATE REQUIRED, once.
@@ -211,7 +226,7 @@ def done_session(sid):
     """A session whose handoff is saved (status done) at the Opus handoff point."""
     run("UserPromptSubmit", sid, transcript_path=transcript(sid, "claude-opus-5-5", opus_at))
     (handoffs / f"handoff-{sid}.md").write_text("# Handoff\n- Goal: the sample task\n")
-    run("PostToolUse", sid, tool_name="Write", transcript_path=transcript(sid, "claude-opus-5-5", opus_at))
+    run("PostToolUse", sid, tool_name="Write", tool_input={"file_path": str(handoffs / f"handoff-{sid}.md")}, transcript_path=transcript(sid, "claude-opus-5-5", opus_at))
     return (state(sid) or {}).get("status") == "done"
 
 
@@ -244,6 +259,63 @@ out, err = run("UserPromptSubmit", sid, transcript_path=transcript(sid, "claude-
 check("advisor: 175k context (347k summed) gives no notice", out is None and state(sid) is None and not err, err or context(out))
 out, err = run("UserPromptSubmit", sid, transcript_path=transcript(sid, "claude-opus-5-5", 1000, advisor_reply("claude-opus-5-5", opus_at - 4000, opus_at, 200_000)))
 check(f"advisor: HANDOFF REQUIRED at {opus_at} from the last iteration", required(out, opus_at, opus_ac) and not err, err or context(out))
+
+# Parallel sessions in one checkout share handoff/ (Nov 13 2026: another session's handoff-20261113-003000.md was recorded for
+# this session's 001459). Only this session's own handoff counts, whatever the names or times of the others.
+shared = home / "shared"
+subprocess.run(["git", "init", "-q", str(shared)], check=True)
+(shared / ".gitignore").write_text("handoff/\n")
+(shared / "handoff").mkdir()
+mine, other = "check-parallel-mine", "check-parallel-other"
+run("UserPromptSubmit", mine, root=shared, transcript_path=transcript(mine, "claude-opus-5-5", opus_at))
+theirs = shared / "handoff" / "handoff-20261113-003000.md"
+theirs.write_text("# Handoff\n- Goal: the other session's task\n")
+out, err = run("PostToolUse", mine, root=shared, tool_name="Read", transcript_path=transcript(mine, "claude-opus-5-5", opus_at))
+check("parallel: another session's new handoff leaves this one pending", out is None and (state(mine) or {}).get("status") == "pending" and not err, err or context(out) or state(mine))
+own = shared / "handoff" / "handoff-20261113-001459.md"
+own.write_text("# Handoff\n- Goal: this session's task\n")
+out, err = run("PostToolUse", mine, root=shared, tool_name="Write", tool_input={"file_path": str(own)}, transcript_path=transcript(mine, "claude-opus-5-5", opus_at))
+s = state(mine) or {}
+check("parallel: this session's Write is recorded, not the later-named file of another session",
+      context(out).startswith("Handoff saved") and s.get("handoff") == str(own) and not err, err or (context(out), s))
+out, err = run("SessionStart", mine, root=shared, source="compact", transcript_path=transcript(mine, "claude-opus-5-5", opus_ac))
+check("parallel: its own handoff is the one pasted back", "this session's task" in context(out) and "other session" not in context(out) and not err, err or context(out))
+
+# A handoff written by shell with this session's tag counts; the other session's live handoff and this one survive pruning,
+# which goes by mtime, not by name.
+run("UserPromptSubmit", other, root=shared, transcript_path=transcript(other, "claude-opus-5-5", opus_at))
+tagged = shared / "handoff" / f"handoff-20261113-002000-{tag(other)}.md"
+tagged.write_text("# Handoff\n- Goal: the other session's task\n")
+out, err = run("PostToolUse", other, root=shared, tool_name="Bash", tool_input={"command": f"cat > {tagged}"}, transcript_path=transcript(other, "claude-opus-5-5", opus_at))
+check("tagged: a shell-written handoff named with the session tag is recorded", (state(other) or {}).get("handoff") == str(tagged) and not err, err or context(out) or state(other))
+for n in range(4):  # newer handoffs from finished sessions, named after this session's
+    f = shared / "handoff" / f"handoff-20261113-01{n}000.md"
+    f.write_text("old\n")
+    os.utime(f, (time.time() - 60 + n, time.time() - 60 + n))
+for f in (own, theirs, tagged):
+    os.utime(f, (time.time() - 3600, time.time() - 3600))
+sid3 = "check-parallel-third"
+run("UserPromptSubmit", sid3, root=shared, transcript_path=transcript(sid3, "claude-opus-5-5", opus_at))
+third = shared / "handoff" / f"handoff-20261113-020000-{tag(sid3)}.md"
+third.write_text("# Handoff\n")
+run("PostToolUse", sid3, root=shared, tool_name="Bash", tool_input={"command": "true"}, transcript_path=transcript(sid3, "claude-opus-5-5", opus_at))
+left = {p.name for p in (shared / "handoff").glob("handoff-*.md")}
+check("prune: live sessions' handoffs kept, the rest cut to the newest 3 by mtime",
+      {own.name, tagged.name, third.name} <= left and theirs.name not in left and len(left) == 5, sorted(left))
+
+# A pending update ends only when this session's recorded handoff changes.
+upd = "check-parallel-update"
+run("UserPromptSubmit", upd, root=shared, transcript_path=transcript(upd, "claude-opus-5-5", opus_at))
+uf = shared / "handoff" / f"handoff-20261113-030000-{tag(upd)}.md"
+uf.write_text("# Handoff\n")
+run("PostToolUse", upd, root=shared, tool_name="Bash", tool_input={"command": "true"}, transcript_path=transcript(upd, "claude-opus-5-5", opus_at))
+run("PostToolUse", upd, root=shared, tool_name="Read", transcript_path=transcript(upd, "claude-opus-5-5", opus_up))
+(shared / "handoff" / "handoff-20261113-040000.md").write_text("# someone else's\n")
+out, err = run("PostToolUse", upd, root=shared, tool_name="Read", transcript_path=transcript(upd, "claude-opus-5-5", opus_up))
+check("update: another session's handoff leaves the update pending", out is None and (state(upd) or {}).get("status") == "pending" and not err, err or context(out))
+uf.write_text("# Handoff\n## Since the handoff\n- more\n")
+out, err = run("PostToolUse", upd, root=shared, tool_name="Edit", tool_input={"file_path": str(uf)}, transcript_path=transcript(upd, "claude-opus-5-5", opus_up))
+check("update: appending to its own handoff ends it", context(out).startswith("Handoff update saved") and (state(upd) or {}).get("handoff") == str(uf) and not err, err or context(out))
 
 if not failed:
     shutil.rmtree(home)  # kept on a failure, to look at
