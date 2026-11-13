@@ -9,7 +9,7 @@ The next context starts from this file plus the repo, so it only needs what the 
 
 ## 1. Write the file
 
-The root is `git rev-parse --show-toplevel`, or the working directory outside git. Run `mkdir -p <root>/handoff`, then write `<root>/handoff/handoff-$(date +%Y%m%d-%H%M%S).md`:
+The root is `git rev-parse --show-toplevel`, or the working directory outside git. Run `mkdir -p <root>/handoff`, then write `<root>/handoff/handoff-$(date +%Y%m%d-%H%M%S)-<tag>.md`, where `<tag>` is the suffix the HANDOFF REQUIRED notice gives (this session's id, first 8 characters). Other sessions in the same checkout write to the same folder, and the hook counts only the file with this session's tag or the one this session wrote with Write or Edit. Without a notice (the user asked), leave the tag out:
 
 ```markdown
 # Handoff YYYY-MM-DD HH:MM, <repo name> @ <branch> (<short HEAD sha>)
