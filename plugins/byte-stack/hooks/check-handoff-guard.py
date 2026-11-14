@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check the handoff guard on sample sessions: each model's notices at the points its own window gives, subagents ignored,
 HANDOFF_AT=0 switching it off, the settings rank, and the pending block, a saved (gitignored) or committed handoff, KEEP
-pruning, the update and the paste-back working.
+pruning and the paste-back working.
 
 Also: handoffs from other sessions sharing handoff/ are never recorded, end the pending state or get pruned while live.
 
@@ -9,10 +9,11 @@ Usage: python3 check-handoff-guard.py [HOOK]
   HOOK  the handoff-guard.py to run (default: the one beside this file), e.g. a project's .claude/hooks/handoff-guard.py copy
 
 It runs the hook as Claude Code does (one event as JSON on stdin) in a throwaway HOME, git project and session ids, with user
-settings shaped like the real ones (modelSettings: Sonnet 150000, Opus and Fable 335000; Haiku left out to reach the fallback),
+settings shaped like the real ones (modelSettings: Sonnet 150000, Opus and Fable 335000; Haiku and an unknown model are left out,
+to get their model's own window),
 so no live session's state or settings are read or changed. Prints one PASS/FAIL line per check; exits 0 only if all pass.
 """
-import json, os, shutil, subprocess, sys, tempfile, time
+import json, os, re, shutil, subprocess, sys, tempfile, time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,8 +21,8 @@ if sys.argv[1:2] in (["-h"], ["--help"]):
     sys.exit(print(__doc__.strip()))
 HOOK = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).with_name("handoff-guard.py")).resolve()
 RESERVE = 33_000  # Claude Code autocompacts at window - min(maxOutputTokens, 20000) - 13000
-FALLBACK = 200_000  # the window the guard assumes when no setting names the model
-WINDOWS = {"claude-opus-5-5": 335_000, "claude-fable-5-2": 335_000, "claude-sonnet-5-5": 150_000, "claude-haiku-5-5": FALLBACK}
+WINDOWS = {"claude-opus-5-5": 335_000, "claude-fable-5-2": 335_000, "claude-sonnet-5-5": 150_000}  # named by the sample user settings
+DEFAULTS = {"claude-haiku-5-5": 1_000_000, "claude-haiku-4-5-20251001": 200_000, "claude-test-9": 200_000}  # left out: their model's own window
 home = Path(tempfile.mkdtemp(prefix="handoff-check-"))
 project = home / "project"
 states = home / ".claude" / "handoff-state"
@@ -36,11 +37,11 @@ def check(label, ok, detail=""):
 
 def points(window):
     autocompact = window - RESERVE
-    return autocompact, autocompact - 35_000, autocompact - 6_000
+    return autocompact, autocompact - 35_000
 
 
 def usage(tokens):
-    return {"input_tokens": 3, "cache_creation_input_tokens": 1000, "cache_read_input_tokens": tokens - 1003, "output_tokens": 50}
+    return {"input_tokens": 3, "cache_creation_input_tokens": 1000, "cache_read_input_tokens": tokens - 1053, "output_tokens": 50}
 
 
 def reply(model, tokens, sidechain=False):
@@ -79,7 +80,9 @@ def run(event, sid, env=None, root=None, **fields):
     """Run the hook on one event in root (default: the sample project); return (its JSON output or None, stderr)."""
     root = root or project
     data = {"hook_event_name": event, "session_id": sid, "cwd": str(root), **fields}
-    base = {k: v for k, v in os.environ.items() if not k.startswith("HANDOFF_")}
+    drop = ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", "CLAUDE_CODE_DISABLE_1M_CONTEXT",
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_MAX_OUTPUT_TOKENS")  # a developer's shell may hold these
+    base = {k: v for k, v in os.environ.items() if not k.startswith("HANDOFF_") and k not in drop}
     out = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(data), capture_output=True, text=True, timeout=30,
                          env={**base, "HOME": str(home), "CLAUDE_PROJECT_DIR": str(root), **(env or {})})
     return (json.loads(out.stdout) if out.stdout.strip() else None), out.stderr.strip()
@@ -107,12 +110,12 @@ project.mkdir(parents=True)
 subprocess.run(["git", "init", "-q", str(project)], check=True)
 (project / ".gitignore").write_text("handoff/\n")
 (home / ".claude").mkdir()
-(home / ".claude" / "settings.json").write_text(json.dumps({"modelSettings": {m: {"autoCompactWindow": w} for m, w in WINDOWS.items() if w != FALLBACK}}))
+(home / ".claude" / "settings.json").write_text(json.dumps({"modelSettings": {m: {"autoCompactWindow": w} for m, w in WINDOWS.items()}}))
 print(f"hook: {HOOK}\nhome: {home}")
 
 # Each model: nothing 1 token short of its handoff point, then HANDOFF REQUIRED at it, with its own autocompact point.
-for model, window in WINDOWS.items():
-    autocompact, handoff_at, _ = points(window)
+for model, window in {**WINDOWS, **DEFAULTS}.items():
+    autocompact, handoff_at = points(window)
     sid = f"check-{model}"
     out, err = run("UserPromptSubmit", sid, transcript_path=transcript(sid, model, handoff_at - 1))
     check(f"{model}: no notice at {handoff_at - 1} tokens", out is None and state(sid) is None and not err, err or context(out))
@@ -122,7 +125,8 @@ for model, window in WINDOWS.items():
           required(out, handoff_at, autocompact) and s.get("status") == "pending" and s.get("at") == handoff_at and not err, err or context(out) or s)
 
 # A subagent's events carry an agent_id: never measured, never blocked.
-opus_ac, opus_at, opus_up = points(WINDOWS["claude-opus-5-5"])
+opus_ac, opus_at = points(WINDOWS["claude-opus-5-5"])
+opus_near = opus_ac - 6_000  # only feeds the 2.1.322 subagent checks, removed with the paste-by-marker rewrite
 out, err = run("PostToolUse", "check-subagent", agent_id="a1", tool_name="Read", transcript_path=transcript("check-subagent", "claude-fable-5-2", 900_000))
 check("subagent: no notice and no state past every point", out is None and state("check-subagent") is None and not err, err or context(out))
 out, err = run("PreToolUse", "check-claude-opus-5-5", agent_id="a1", tool_name="Edit", tool_input={"file_path": str(project / "app.py")})
@@ -133,9 +137,9 @@ out, err = run("UserPromptSubmit", "check-off", env={"HANDOFF_AT": "0"}, transcr
 check("HANDOFF_AT=0: no notice and no state", out is None and state("check-off") is None and not err, err or context(out))
 out, err = run("UserPromptSubmit", "check-at", env={"HANDOFF_AT": "100000"}, transcript_path=transcript("check-at", "claude-sonnet-5-5", 100_000))
 check("HANDOFF_AT=100000: HANDOFF REQUIRED at 100000 on Sonnet", required(out, 100_000, points(150_000)[0]) and not err, err or context(out))
-ac, at, _ = points(400_000)
-out, err = run("UserPromptSubmit", "check-window", env={"HANDOFF_WINDOW": "400000"}, transcript_path=transcript("check-window", "claude-haiku-5-5", at))
-check(f"HANDOFF_WINDOW=400000: unnamed model's notice at {at}, autocompact {ac}", required(out, at, ac) and not err, err or context(out))
+ac, at = points(400_000)
+out, err = run("UserPromptSubmit", "check-window", env={"HANDOFF_WINDOW": "400000"}, transcript_path=transcript("check-window", "claude-test-9", at))
+check(f"HANDOFF_WINDOW=400000: unknown model's notice at {at}, autocompact {ac}", required(out, at, ac) and not err, err or context(out))
 
 # Settings rank, as Claude Code merges them: in one file a modelSettings entry beats its top-level autoCompactWindow, and the
 # project's local settings come before its .claude/settings.json, which comes before the user's.
@@ -143,15 +147,65 @@ check(f"HANDOFF_WINDOW=400000: unnamed model's notice at {at}, autocompact {ac}"
 (project / ".claude" / "settings.json").write_text(json.dumps({"autoCompactWindow": 300_000, "modelSettings": {"claude-sonnet-5-5": {"autoCompactWindow": 180_000}}}))
 for label, model, window in (("project modelSettings 180000 beats its own top-level 300000 and the user's 150000", "claude-sonnet-5-5", 180_000),
                              ("project top-level 300000 beats the user's modelSettings 335000", "claude-fable-5-2", 300_000)):
-    ac, at, _ = points(window)
+    ac, at = points(window)
     sid = f"check-rank-{model}"
     out, err = run("UserPromptSubmit", sid, transcript_path=transcript(sid, model, at))
     check(f"{label}: {model}'s notice at {at}", required(out, at, ac) and not err, err or context(out))
 (project / ".claude" / "settings.local.json").write_text(json.dumps({"autoCompactWindow": 250_000}))
-ac, at, _ = points(250_000)
+ac, at = points(250_000)
 out, err = run("UserPromptSubmit", "check-local", transcript_path=transcript("check-local", "claude-sonnet-5-5", at))
 check(f"settings.local.json top-level 250000 beats the project's modelSettings: Sonnet's notice at {at}", required(out, at, ac) and not err, err or context(out))
+ac, at = points(200_000)
+out, err = run("UserPromptSubmit", "check-rank-cap", transcript_path=transcript("check-rank-cap", "claude-haiku-4-5-20251001", at))
+check(f"project top-level 300000 on claude-haiku-4-5-20251001: capped at the model's 200000, notice at {at}", required(out, at, ac) and not err, err or context(out))
 shutil.rmtree(project / ".claude")
+
+# Env vars and settings values Claude Code itself reads (CLAUDE_CODE_AUTO_COMPACT_WINDOW beats every setting).
+ac, at = points(200_000)
+out, err = run("UserPromptSubmit", "check-no1m", env={"CLAUDE_CODE_DISABLE_1M_CONTEXT": "1"}, transcript_path=transcript("check-no1m", "claude-haiku-5-5", at))
+check(f"CLAUDE_CODE_DISABLE_1M_CONTEXT=1 on claude-haiku-5-5: notice at {at}", required(out, at, ac) and not err, err or context(out))
+out, err = run("UserPromptSubmit", "check-envwin", env={"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "200k"}, transcript_path=transcript("check-envwin", "claude-opus-5-5", at))
+check(f"CLAUDE_CODE_AUTO_COMPACT_WINDOW=200k beats the user's Opus 335000: notice at {at}", required(out, at, ac) and not err, err or context(out))
+out, err = run("UserPromptSubmit", "check-pct", env={"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50"}, transcript_path=transcript("check-pct", "claude-sonnet-5-5", 30_000))
+check("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50 on Sonnet 150000: autocompact 65000, notice at 30000", required(out, 30_000, 65_000) and not err, err or context(out))
+(project / ".claude").mkdir()
+(project / ".claude" / "settings.json").write_text(json.dumps({"autoCompactWindow": "auto"}))
+ac, at = points(1_000_000)
+out, err = run("UserPromptSubmit", "check-auto", transcript_path=transcript("check-auto", "claude-opus-5-5", at))
+check(f"autoCompactWindow \"auto\" in the project: Opus's own 1M beats the user's 335000, notice at {at}", required(out, at, ac) and not err, err or context(out))
+(project / ".claude" / "settings.json").write_text(json.dumps({"modelSettings": {"claude-opus-5": {"autoCompactWindow": 150_000}}}))
+out, err = run("UserPromptSubmit", "check-exactkey-low", transcript_path=transcript("check-exactkey-low", "claude-opus-5-5", points(150_000)[1]))
+check("modelSettings key claude-opus-5 is not claude-opus-5-5: no notice at 82000", out is None and state("check-exactkey-low") is None and not err, err or context(out))
+out, err = run("UserPromptSubmit", "check-exactkey", transcript_path=transcript("check-exactkey", "claude-opus-5-5", opus_at))
+check(f"modelSettings key claude-opus-5 is not claude-opus-5-5: the user's 335000 applies, notice at {opus_at}", required(out, opus_at, opus_ac) and not err, err or context(out))
+shutil.rmtree(project / ".claude")
+
+# Output tokens count: a reply of 266000 read + 1000 created + 3 input + 1000 output is 267000.
+entry = {"type": "assistant", "message": {"model": "claude-opus-5-5", "usage": {"input_tokens": 3, "cache_creation_input_tokens": 1000, "cache_read_input_tokens": 266_000 - 1003, "output_tokens": 1000}}}
+out, err = run("UserPromptSubmit", "check-output", transcript_path=write(home / "check-output.jsonl", [entry]))
+check("output tokens counted: 267000 on Opus gives HANDOFF REQUIRED", required(out, opus_at, opus_ac) and not err, err or context(out))
+
+# The ceiling: the last auto compaction's preTokens lowers the autocompact point (here from 302000 to 150000).
+out, err = run("UserPromptSubmit", "check-ceiling", transcript_path=transcript("check-ceiling", "claude-opus-5-5", 140_000, boundary(150_000), reply("claude-opus-5-5", 115_000)))
+check("ceiling: a compaction at 150000 puts the notice at 115000, autocompact 150000", required(out, 115_000, 150_000) and not err, err or context(out))
+
+# Root and path: Claude Code's project folder, not the cwd's own git root, holds handoff/, and the path is named once.
+nested = project / "nested"
+nested.mkdir()
+subprocess.run(["git", "init", "-q", str(nested)], check=True)
+nenv = {"CLAUDE_PROJECT_DIR": str(project)}
+sid = "check-nested"
+out, err = run("UserPromptSubmit", sid, root=nested, env=nenv, transcript_path=transcript(sid, "claude-opus-5-5", opus_at))
+s = state(sid) or {}
+pat = re.compile(re.escape(str(project / "handoff")) + r"/handoff-\d{8}-\d{6}-" + tag(sid) + r"\.md")
+path = s.get("path", "")
+check("nested repo: state path is <project>/handoff/handoff-<stamp>-<tag>.md and the notice names it", bool(pat.fullmatch(path)) and path in context(out) and not err, err or (path, context(out)))
+out, err = run("PreToolUse", sid, root=nested, env=nenv, tool_name="Edit", tool_input={"file_path": str(project / "app.py")})
+deny = ((out or {}).get("hookSpecificOutput") or {}).get("permissionDecision")
+reason = ((out or {}).get("hookSpecificOutput") or {}).get("permissionDecisionReason", "")
+check("nested repo: an Edit is denied and the deny names the same path", deny == "deny" and path in reason and not err, err or out)
+out, err = run("PreToolUse", sid, root=nested, env=nenv, tool_name="Write", tool_input={"file_path": path})
+check("nested repo: a Write to that path is allowed", out is None and not err, err or out)
 
 # Pending: other tools are denied, handoff work isn't; a saved handoff ends it and the oldest beyond KEEP (3) are pruned.
 sid = "check-claude-opus-5-5"
@@ -201,24 +255,16 @@ check("committed: this session's tagged commit ends it, its own file recorded (n
       pending and context(out).startswith("Handoff committed") and s.get("status") == "done" and s.get("handoff") == str(repo / "handoff" / names[3]) and kept == sorted(names) and not err,
       err or (context(out), s, kept))
 
-# Done and still not compacted at the update point: HANDOFF UPDATE REQUIRED, once.
-out, err = run("PostToolUse", sid, tool_name="Read", transcript_path=transcript(sid, "claude-opus-5-5", opus_up - 1))
-check(f"done: no update notice at {opus_up - 1}", out is None and not err, err or context(out))
-out, err = run("PostToolUse", sid, env={"HANDOFF_UPDATE_AT": str(opus_up + 1000)}, tool_name="Read", transcript_path=transcript(sid, "claude-opus-5-5", opus_up))
-check(f"HANDOFF_UPDATE_AT={opus_up + 1000}: no update notice at {opus_up}", out is None and not err, err or context(out))
-out, err = run("PostToolUse", sid, tool_name="Read", transcript_path=transcript(sid, "claude-opus-5-5", opus_up))
-check(f"done: HANDOFF UPDATE REQUIRED at {opus_up}", context(out).startswith("HANDOFF UPDATE REQUIRED") and f"(at {opus_ac})" in context(out) and (state(sid) or {}).get("updated") is True, err or context(out))
-
 # The main thread's autocompact: SessionStart(compact) pastes the handoff back in; the state stays until the next main-thread
 # event finds the compaction in the main transcript, which re-arms the guard without pasting it twice.
-out, err = run("SessionStart", sid, source="compact", transcript_path=transcript(sid, "claude-opus-5-5", opus_up))
+out, err = run("SessionStart", sid, source="compact", transcript_path=transcript(sid, "claude-opus-5-5", opus_near))
 s = state(sid) or {}
 check("main compact: handoff pasted back as Previous context, state kept until the transcript shows it",
       context(out).startswith("Previous context") and "the sample task" in context(out) and s.get("pasted") and not err, err or context(out) or s)
-compacted = transcript(sid, "claude-opus-5-5", opus_up, boundary(opus_up + 2000))
+compacted = transcript(sid, "claude-opus-5-5", opus_near, boundary(opus_near + 2000))
 out, err = run("PreToolUse", sid, tool_name="Edit", tool_input={"file_path": str(project / "app.py")}, transcript_path=compacted)
-check("main compact: the pending update no longer blocks once the transcript shows the compaction", out is None and not err, err or out)
-out, err = run("PostToolUse", sid, tool_name="Read", transcript_path=transcript(sid, "claude-opus-5-5", opus_up, boundary(opus_up + 2000), reply("claude-opus-5-5", 30_000)))
+check("main compact: an Edit isn't blocked once the transcript shows the compaction", out is None and not err, err or out)
+out, err = run("PostToolUse", sid, tool_name="Read", transcript_path=transcript(sid, "claude-opus-5-5", opus_near, boundary(opus_near + 2000), reply("claude-opus-5-5", 30_000)))
 check("main compact: next event re-arms the guard (state cleared) without a second paste", out is None and state(sid) is None and not err, err or context(out))
 
 
@@ -238,9 +284,9 @@ ok = done_session(sid)
 subagent(sid, "claude-opus-5-5", opus_ac + 500)
 out, err = run("SessionStart", sid, source="compact", transcript_path=transcript(sid, "claude-opus-5-5", opus_at + 13_000))
 check("subagent compact: no paste, main thread's state kept", ok and out is None and (state(sid) or {}).get("status") == "done" and not err, err or context(out) or state(sid))
-out, err = run("SessionStart", sid, source="compact", transcript_path=transcript(sid, "claude-opus-5-5", opus_up + 1000))
+out, err = run("SessionStart", sid, source="compact", transcript_path=transcript(sid, "claude-opus-5-5", opus_near + 1000))
 check("main and a subagent both at their autocompact: not sure whose, so no paste yet", out is None and (state(sid) or {}).get("status") == "done" and not err, err or context(out))
-out, err = run("PostToolUse", sid, tool_name="Read", transcript_path=transcript(sid, "claude-opus-5-5", opus_up + 1000, boundary(opus_ac + 1000), reply("claude-opus-5-5", 30_000)))
+out, err = run("PostToolUse", sid, tool_name="Read", transcript_path=transcript(sid, "claude-opus-5-5", opus_near + 1000, boundary(opus_ac + 1000), reply("claude-opus-5-5", 30_000)))
 check("main compact after them: next event pastes the handoff and re-arms the guard",
       context(out).startswith("Previous context") and "the sample task" in context(out) and state(sid) is None and not err, err or context(out))
 
@@ -302,20 +348,6 @@ run("PostToolUse", sid3, root=shared, tool_name="Bash", tool_input={"command": "
 left = {p.name for p in (shared / "handoff").glob("handoff-*.md")}
 check("prune: live sessions' handoffs kept, the rest cut to the newest 3 by mtime",
       {own.name, tagged.name, third.name} <= left and theirs.name not in left and len(left) == 5, sorted(left))
-
-# A pending update ends only when this session's recorded handoff changes.
-upd = "check-parallel-update"
-run("UserPromptSubmit", upd, root=shared, transcript_path=transcript(upd, "claude-opus-5-5", opus_at))
-uf = shared / "handoff" / f"handoff-20261113-030000-{tag(upd)}.md"
-uf.write_text("# Handoff\n")
-run("PostToolUse", upd, root=shared, tool_name="Bash", tool_input={"command": "true"}, transcript_path=transcript(upd, "claude-opus-5-5", opus_at))
-run("PostToolUse", upd, root=shared, tool_name="Read", transcript_path=transcript(upd, "claude-opus-5-5", opus_up))
-(shared / "handoff" / "handoff-20261113-040000.md").write_text("# someone else's\n")
-out, err = run("PostToolUse", upd, root=shared, tool_name="Read", transcript_path=transcript(upd, "claude-opus-5-5", opus_up))
-check("update: another session's handoff leaves the update pending", out is None and (state(upd) or {}).get("status") == "pending" and not err, err or context(out))
-uf.write_text("# Handoff\n## Since the handoff\n- more\n")
-out, err = run("PostToolUse", upd, root=shared, tool_name="Edit", tool_input={"file_path": str(uf)}, transcript_path=transcript(upd, "claude-opus-5-5", opus_up))
-check("update: appending to its own handoff ends it", context(out).startswith("Handoff update saved") and (state(upd) or {}).get("handoff") == str(uf) and not err, err or context(out))
 
 if not failed:
     shutil.rmtree(home)  # kept on a failure, to look at
