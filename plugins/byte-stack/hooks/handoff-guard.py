@@ -444,7 +444,7 @@ def main():
                 if state.get("defers"):
                     saved = datetime.fromtimestamp(Path(path).stat().st_mtime).strftime("%H:%M:%S")
                     text += (f"\n\nThe guard saw this handoff saved at {saved} while the compaction waited for it: don't write it again, "
-                             f"whatever the summary above says. It was written in a hurry, so the {SKILL} skill's step 2 checks didn't run: "
+                             f"whatever the summary above says. It was written in a hurry, so the {SKILL} skill's step 2 checks may not have run: "
                              "run them on it now (branch, sha, paths, uncommitted files), fix the file if one fails, then carry on from its Next.")
                 say(event, text)
             elif state.get("standin"):
