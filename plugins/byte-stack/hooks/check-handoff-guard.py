@@ -71,13 +71,8 @@ def transcript(sid, model, tokens, *more):
     return write(home / f"{sid}.jsonl", [reply(model, tokens), *more])
 
 
-def subagent(sid, model, tokens):
-    """A subagent's own transcript, where Claude Code keeps it: <session>/subagents/agent-<id>.jsonl, entries marked isSidechain."""
-    return write(home / sid / "subagents" / "agent-a1.jsonl", [reply(model, tokens, sidechain=True)])
-
-
-def run(event, sid, env=None, root=None, **fields):
-    """Run the hook on one event in root (default: the sample project); return (its JSON output or None, stderr)."""
+def run_raw(event, sid, env=None, root=None, **fields):
+    """Run the hook on one event in root (default: the sample project); return (exit code, stdout, stderr)."""
     root = root or project
     data = {"hook_event_name": event, "session_id": sid, "cwd": str(root), **fields}
     drop = ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", "CLAUDE_CODE_DISABLE_1M_CONTEXT",
@@ -85,7 +80,13 @@ def run(event, sid, env=None, root=None, **fields):
     base = {k: v for k, v in os.environ.items() if not k.startswith("HANDOFF_") and k not in drop}
     out = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(data), capture_output=True, text=True, timeout=30,
                          env={**base, "HOME": str(home), "CLAUDE_PROJECT_DIR": str(root), **(env or {})})
-    return (json.loads(out.stdout) if out.stdout.strip() else None), out.stderr.strip()
+    return out.returncode, out.stdout, out.stderr.strip()
+
+
+def run(event, sid, env=None, root=None, **fields):
+    """run_raw for the events that answer in JSON; return (its JSON output or None, stderr)."""
+    _, stdout, err = run_raw(event, sid, env, root, **fields)
+    return (json.loads(stdout) if stdout.strip() else None), err
 
 
 def context(out):
@@ -126,7 +127,6 @@ for model, window in {**WINDOWS, **DEFAULTS}.items():
 
 # A subagent's events carry an agent_id: never measured, never blocked.
 opus_ac, opus_at = points(WINDOWS["claude-opus-5-5"])
-opus_near = opus_ac - 6_000  # only feeds the 2.1.322 subagent checks, removed with the paste-by-marker rewrite
 out, err = run("PostToolUse", "check-subagent", agent_id="a1", tool_name="Read", transcript_path=transcript("check-subagent", "claude-fable-5-2", 900_000))
 check("subagent: no notice and no state past every point", out is None and state("check-subagent") is None and not err, err or context(out))
 out, err = run("PreToolUse", "check-claude-opus-5-5", agent_id="a1", tool_name="Edit", tool_input={"file_path": str(project / "app.py")})
@@ -255,17 +255,15 @@ check("committed: this session's tagged commit ends it, its own file recorded (n
       pending and context(out).startswith("Handoff committed") and s.get("status") == "done" and s.get("handoff") == str(repo / "handoff" / names[3]) and kept == sorted(names) and not err,
       err or (context(out), s, kept))
 
-# The main thread's autocompact: SessionStart(compact) pastes the handoff back in; the state stays until the next main-thread
-# event finds the compaction in the main transcript, which re-arms the guard without pasting it twice.
-out, err = run("SessionStart", sid, source="compact", transcript_path=transcript(sid, "claude-opus-5-5", opus_near))
-s = state(sid) or {}
-check("main compact: handoff pasted back as Previous context, state kept until the transcript shows it",
-      context(out).startswith("Previous context") and "the sample task" in context(out) and s.get("pasted") and not err, err or context(out) or s)
-compacted = transcript(sid, "claude-opus-5-5", opus_near, boundary(opus_near + 2000))
-out, err = run("PreToolUse", sid, tool_name="Edit", tool_input={"file_path": str(project / "app.py")}, transcript_path=compacted)
-check("main compact: an Edit isn't blocked once the transcript shows the compaction", out is None and not err, err or out)
-out, err = run("PostToolUse", sid, tool_name="Read", transcript_path=transcript(sid, "claude-opus-5-5", opus_near, boundary(opus_near + 2000), reply("claude-opus-5-5", 30_000)))
-check("main compact: next event re-arms the guard (state cleared) without a second paste", out is None and state(sid) is None and not err, err or context(out))
+# The main thread's autocompact with its handoff saved: PreCompact lets it run, tells the summarizer to continue from the handoff
+# and leaves a marker; SessionStart(compact) goes by the marker: it deletes the state (re-arming the guard) and pastes the handoff.
+code, out, err = run_raw("PreCompact", sid, trigger="auto", transcript_path=transcript(sid, "claude-opus-5-5", opus_ac))
+check("main compact: PreCompact with a saved handoff lets it run, names the handoff and marks the compaction",
+      code == 0 and str(new) in out and "never list writing or checking it" in out and (state(sid) or {}).get("compacting") and not err, err or (code, out, state(sid)))
+out, err = run("SessionStart", sid, source="compact", transcript_path=transcript(sid, "claude-opus-5-5", opus_ac))
+check("main compact: handoff pasted back as Previous context (no deferral note), state deleted",
+      context(out).startswith("Previous context") and "the sample task" in context(out) and "don't write it again" not in context(out) and state(sid) is None and not err,
+      err or context(out) or state(sid))
 
 
 def done_session(sid):
@@ -276,19 +274,114 @@ def done_session(sid):
     return (state(sid) or {}).get("status") == "done"
 
 
-# A subagent's compaction runs SessionStart(compact) with the main thread's session_id and transcript_path and no agent_id
-# (Claude Code 2.1.322): no paste into the subagent and the main thread's state kept (Nov 12 2026 it was deleted, and the
-# main handoff pasted into a worker). The main thread's own compaction later still gets the handoff.
-sid = "check-subagent-compact"
+def pre(sid, tokens, model="claude-opus-5-5", trigger="auto", **fields):
+    """PreCompact for a session whose last reply read `tokens`; return (exit code, stdout, stderr)."""
+    return run_raw("PreCompact", sid, trigger=trigger, transcript_path=transcript(sid, model, tokens), **fields)
+
+
+def save_handoff(sid, tokens):
+    """Write the session's own handoff where the guard named it (the state's path) and let the Write event end the pending state."""
+    path = Path(state(sid)["path"])
+    path.parent.mkdir(exist_ok=True)
+    path.write_text("# Handoff\n- Goal: the sample task\n")
+    run("PostToolUse", sid, tool_name="Write", tool_input={"file_path": str(path)}, transcript_path=transcript(sid, "claude-opus-5-5", tokens))
+    return path
+
+
+STARTS = "Instructions from the handoff guard: no handoff was saved"
+SAVED = "Instructions from the handoff guard: this session saved a handoff at"
+
+# A compaction without a PreCompact before it (a subagent's, or Claude Code before 2.1.323) leaves no marker: SessionStart(compact)
+# does nothing, and the next main-thread event finds the compaction in the main transcript, pastes the handoff, re-arms the guard.
+sid = "check-markerless-compact"
 ok = done_session(sid)
-subagent(sid, "claude-opus-5-5", opus_ac + 500)
-out, err = run("SessionStart", sid, source="compact", transcript_path=transcript(sid, "claude-opus-5-5", opus_at + 13_000))
-check("subagent compact: no paste, main thread's state kept", ok and out is None and (state(sid) or {}).get("status") == "done" and not err, err or context(out) or state(sid))
-out, err = run("SessionStart", sid, source="compact", transcript_path=transcript(sid, "claude-opus-5-5", opus_near + 1000))
-check("main and a subagent both at their autocompact: not sure whose, so no paste yet", out is None and (state(sid) or {}).get("status") == "done" and not err, err or context(out))
-out, err = run("PostToolUse", sid, tool_name="Read", transcript_path=transcript(sid, "claude-opus-5-5", opus_near + 1000, boundary(opus_ac + 1000), reply("claude-opus-5-5", 30_000)))
-check("main compact after them: next event pastes the handoff and re-arms the guard",
+out, err = run("SessionStart", sid, source="compact", transcript_path=transcript(sid, "claude-opus-5-5", opus_ac))
+check("compact with no marker: no paste, state kept", ok and out is None and (state(sid) or {}).get("status") == "done" and not err, err or context(out) or state(sid))
+out, err = run("PostToolUse", sid, tool_name="Read", transcript_path=transcript(sid, "claude-opus-5-5", opus_ac, boundary(opus_ac + 1000), reply("claude-opus-5-5", 30_000)))
+check("compact with no marker: the next event pastes the handoff and re-arms the guard",
       context(out).startswith("Previous context") and "the sample task" in context(out) and state(sid) is None and not err, err or context(out))
+
+# PreCompact: an auto compaction before the handoff is saved is put off (exit 2), then the model is told once.
+sid = "check-defer"
+code, out, err = pre(sid, 303_000)
+s = state(sid) or {}
+pattern = re.escape(str(project / "handoff")) + r"/handoff-\d{8}-\d{6}-" + tag(sid) + r"\.md"
+check("defer: an auto compaction with no handoff is put off, state pending, path named",
+      code == 2 and not out and s.get("status") == "pending" and s.get("defers") == 1 and s.get("deferred_at") == 303_000 and re.fullmatch(pattern, s.get("path", "")), (code, out, err, s))
+out, err = run("PostToolUse", sid, tool_name="Read", transcript_path=transcript(sid, "claude-opus-5-5", 305_000))
+s = state(sid) or {}
+check("defer: the next event says the autocompact is due now, naming that path, once",
+      context(out).startswith("HANDOFF REQUIRED: the autocompact is due now") and s.get("path", "x") in context(out) and s.get("told") and not err, err or context(out) or s)
+out, err = run("PostToolUse", sid, tool_name="Read", transcript_path=transcript(sid, "claude-opus-5-5", 305_000))
+check("defer: the second event says nothing more", out is None and not err, err or context(out))
+
+# Growth: a deferral lasts while the context stays within 25k of the first block.
+sid = "check-defer-growth"
+codes = [pre(sid, t)[0] for t in (303_000, 327_999)]
+check("growth: blocked at 303000 and 327999 (25k less 1)", codes == [2, 2], codes)
+code, out, err = pre(sid, 328_000)
+s = state(sid) or {}
+check("growth: 328000 is let through, with the stand-in summary instructions and the marker", code == 0 and out.startswith(STARTS) and s.get("compacting") and s.get("standin"), (code, out, err, s))
+
+# Count: at most 12 deferrals, then the compaction runs; SessionStart says the summary stands in for the handoff.
+sid = "check-defer-count"
+codes = [pre(sid, 303_000)[0] for _ in range(12)]
+check("count: 12 requests are put off", codes == [2] * 12, codes)
+code, out, err = pre(sid, 303_000)
+check("count: the 13th runs, with the stand-in instructions", code == 0 and out.startswith(STARTS), (code, out, err))
+out, err = run("SessionStart", sid, source="compact", transcript_path=transcript(sid, "claude-opus-5-5", 303_000))
+check("count: SessionStart says the summary stands in, and deletes the state",
+      context(out).startswith("The compaction ran before this session's handoff was saved") and state(sid) is None and not err, err or context(out) or state(sid))
+
+# A handoff saved after the first block: the next PreCompact lets the compaction run with instructions to continue from it, and
+# SessionStart pastes it with the note not to write it again and to run the skill's step 2 checks.
+sid = "check-defer-saved"
+pre(sid, 303_000)
+path = save_handoff(sid, 305_000)
+check("saved after a block: the guard sees it done", (state(sid) or {}).get("status") == "done" and (state(sid) or {}).get("handoff") == str(path), state(sid))
+code, out, err = pre(sid, 303_500)
+check("saved after a block: the compaction runs, its instructions name the handoff", code == 0 and str(path) in out and "never list writing or checking it" in out and (state(sid) or {}).get("compacting"), (code, out, err))
+out, err = run("SessionStart", sid, source="compact", transcript_path=transcript(sid, "claude-opus-5-5", 303_500))
+text = context(out)
+check("saved after a block: pasted as Previous context, with the deferral note, state deleted",
+      text.startswith("Previous context") and "the sample task" in text and "don't write it again" in text and "step 2" in text and state(sid) is None and not err, err or text or state(sid))
+
+# A normal save (no deferral), and a subagent's SessionStart(compact) (agent_id) that must not touch the main thread's state.
+sid = "check-compact-agent"
+done_session(sid)
+code, out, err = pre(sid, opus_ac)
+out, err = run("SessionStart", sid, source="compact", agent_id="a1", transcript_path=transcript(sid, "claude-opus-5-5", opus_ac))
+check("SessionStart with an agent_id: no output, state kept", out is None and (state(sid) or {}).get("compacting") and not err, err or context(out) or state(sid))
+out, err = run("SessionStart", sid, source="compact", transcript_path=transcript(sid, "claude-opus-5-5", opus_ac))
+check("normal save: pasted without the deferral note, state deleted",
+      context(out).startswith("Previous context") and "don't write it again" not in context(out) and state(sid) is None and not err, err or context(out) or state(sid))
+
+# A manual /compact never blocks: with no handoff it adds nothing; with one it adds the instructions, unless the user gave their own.
+sid = "check-manual"
+pre(sid, 303_000)
+code, out, err = pre(sid, 303_000, trigger="manual")
+check("manual while pending: exit 0, no output", code == 0 and not out.strip(), (code, out, err))
+save_handoff(sid, 305_000)
+code, out, err = pre(sid, 303_000, trigger="manual")
+check("manual with a saved handoff: the handoff instructions", code == 0 and out.startswith(SAVED), (code, out, err))
+code, out, err = pre(sid, 303_000, trigger="manual", custom_instructions="keep the tests")
+check("manual with a saved handoff and the user's own instructions: no output", code == 0 and not out.strip(), (code, out, err))
+sid = "check-manual-off"
+code, out, err = pre(sid, 100_000, trigger="manual")
+check("manual with the state off: exit 0, no output", code == 0 and not out.strip(), (code, out, err))
+out, err = run("SessionStart", sid, source="compact", transcript_path=transcript(sid, "claude-opus-5-5", 100_000))
+check("manual compact: SessionStart pastes nothing and deletes the state", out is None and state(sid) is None and not err, err or context(out) or state(sid))
+
+# A subagent's PreCompact, the switch HANDOFF_DEFER=0 and a full window with no room left (autocompact 10k below the hard limit).
+sid = "check-pre-agent"
+code, out, err = pre(sid, 303_000, agent_id="a1")
+check("PreCompact with an agent_id: exit 0, no output, no state", code == 0 and not out.strip() and state(sid) is None, (code, out, err))
+sid = "check-defer-off"
+code, out, err = run_raw("PreCompact", sid, env={"HANDOFF_DEFER": "0"}, trigger="auto", transcript_path=transcript(sid, "claude-opus-5-5", 303_000))
+check("HANDOFF_DEFER=0: not blocked, stand-in instructions", code == 0 and out.startswith(STARTS), (code, out, err))
+sid = "check-haiku-full"
+code, out, err = pre(sid, 967_000, model="claude-haiku-5-5")
+check("haiku at 967000 (window 1000000, no room): not blocked, stand-in instructions", code == 0 and out.startswith(STARTS), (code, out, err))
 
 # Compacted while a handoff is still pending (none written): the guard re-arms, nothing to paste, tools unblocked.
 sid = "check-pending-compact"
@@ -324,6 +417,7 @@ out, err = run("PostToolUse", mine, root=shared, tool_name="Write", tool_input={
 s = state(mine) or {}
 check("parallel: this session's Write is recorded, not the later-named file of another session",
       context(out).startswith("Handoff saved") and s.get("handoff") == str(own) and not err, err or (context(out), s))
+run_raw("PreCompact", mine, root=shared, trigger="auto", transcript_path=transcript(mine, "claude-opus-5-5", opus_ac))
 out, err = run("SessionStart", mine, root=shared, source="compact", transcript_path=transcript(mine, "claude-opus-5-5", opus_ac))
 check("parallel: its own handoff is the one pasted back", "this session's task" in context(out) and "other session" not in context(out) and not err, err or context(out))
 
@@ -346,8 +440,9 @@ third = shared / "handoff" / f"handoff-20261113-020000-{tag(sid3)}.md"
 third.write_text("# Handoff\n")
 run("PostToolUse", sid3, root=shared, tool_name="Bash", tool_input={"command": "true"}, transcript_path=transcript(sid3, "claude-opus-5-5", opus_at))
 left = {p.name for p in (shared / "handoff").glob("handoff-*.md")}
+# `own` belonged to `mine`, which compacted above: its state is gone, so the handoff is no longer live and goes by mtime.
 check("prune: live sessions' handoffs kept, the rest cut to the newest 3 by mtime",
-      {own.name, tagged.name, third.name} <= left and theirs.name not in left and len(left) == 5, sorted(left))
+      {tagged.name, third.name} <= left and theirs.name not in left and own.name not in left and len(left) == 4, sorted(left))
 
 if not failed:
     shutil.rmtree(home)  # kept on a failure, to look at

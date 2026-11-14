@@ -62,3 +62,5 @@ Confirm it landed with `git log -1 --stat`. Skip the commit outside git, and whe
 ## 4. Carry on
 
 After the commit, say in one line which handoff was written, then go back to the task. The handoff-guard hook that sent the notice (the byte-stack plugin's `hooks/handoff-guard.py`, or the project's copy at `.claude/hooks/handoff-guard.py`; its docstring explains it) blocks other tools only until the handoff is committed (or saved, where step 3 skips the commit). When the autocompact runs (the session model's window set by /autocompact minus the 33k "Autocompact buffer" in the /context panel: ~302k at 335000), it pastes this handoff into the compacted context as "Previous context", next to the compact summary.
+
+If the compaction comes before the handoff is saved, the guard puts it off (up to 25k tokens of growth) and tells you. Write the handoff at once, with the Write tool, at the path the notice names. After the compaction, run the step 2 checks the paste asks for.

@@ -1,5 +1,5 @@
 {
-  "description": "Handoff guard: on every model, asks for a byte-handoff 35k tokens before the autocompact and pastes it back in after it. Does nothing in a project with its own .claude/hooks/handoff-guard.py.",
+  "description": "Handoff guard: on every model, asks for a byte-handoff 35k tokens before the autocompact, pastes it back in after it, and puts off a compaction that arrives first. Does nothing in a project with its own .claude/hooks/handoff-guard.py.",
   "hooks": {
     "SessionStart": [
       {
@@ -39,6 +39,17 @@
     "PostToolUse": [
       {
         "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ ! -f \"${CLAUDE_PLUGIN_ROOT}/hooks/handoff-guard.py\" ] || python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/handoff-guard.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
         "hooks": [
           {
             "type": "command",

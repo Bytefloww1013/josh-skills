@@ -10,10 +10,18 @@ One script for every event (dispatches on hook_event_name):
   PostToolUse                    while pending, a commit of this session's handoff (or, where handoff/ is gitignored or outside
                                  git, a new or changed one) marks it "done" and records its path; work then carries on until
                                  autocompact. An ignored or non-git handoff/ is pruned to the newest KEEP files then.
-  SessionStart(compact)          paste the recorded handoff into the compacted context as "Previous context", if the compaction
-                                 is surely the main thread's (a subagent's compaction runs it too; see main_compacting)
-  UserPromptSubmit, PostToolUse  the main transcript shows a compaction since the guard armed: re-arm it (delete the state), and
-                                 paste the handoff if SessionStart didn't
+  PreCompact (auto)              no handoff saved yet: put the compaction off (exit 2) while the context grows less than
+                                 DEFER_GROWTH, for at most DEFER_MAX requests, and tell Claude to write the handoff now. Past
+                                 those bounds, or with no room, let it run and give the summary instructions. Always notes
+                                 "compacting" in the state: the marker SessionStart(compact) goes by. A manual /compact is
+                                 never put off; it gets the instructions only if a handoff is saved and no instructions of its own.
+  SessionStart(compact)          with a recent "compacting" marker: delete the state (re-arms the guard) and paste the recorded
+                                 handoff as "Previous context", or say the summary stands in for it. A subagent's compaction
+                                 runs it too, but never PreCompact, so it has no marker and does nothing.
+  UserPromptSubmit, PostToolUse  the main transcript shows a compaction since the guard armed (SessionStart didn't run, before
+                                 Claude Code 2.1.323): re-arm it (delete the state), and paste the handoff
+There is no update step and no Stop handler: a finished `-p` task never needed the compaction, and an interactive session's next
+prompt carries the notice.
 Context size is the last main-thread response's, counting only its last model iteration (an advisor call adds more; see
 usage_tokens). The session_id stays the same across autocompact, so the state file links the handoff to the compaction.
 Subagents (events with an agent_id) are ignored: never measured, blocked or counted as the handoff, though they share the session_id.
@@ -41,7 +49,9 @@ from pathlib import Path
 # raise the window above the model's, so a 335000 entry on a 200k model compacts at ~167k: model_window caps it.
 BUFFER = 13_000
 HANDOFF_MARGIN = 35_000  # room to write, check and save the handoff before the autocompact
-NEAR = 6_000  # temporary: 2.3 removes near_autocompact and main_compacting
+DEFER_GROWTH = 25_000  # put a compaction off only while the context stays within this of where the first block found it
+DEFER_MAX = 12         # and for at most this many requests: Claude Code has no circuit breaker (lab E4: 27 blocks)
+HEADROOM = 30_000      # and only this far below the model's hard limit (model window - 23000)
 # The skill the notices name: the plugin's own, namespaced, when this file is in the plugin (its parent folder holds
 # .claude-plugin/), else the project's copy. Not `handoff`, which a user-level skill of that name would outrank.
 SKILL = "byte-stack:byte-handoff" if (Path(__file__).resolve().parent.parent / ".claude-plugin").is_dir() else "byte-handoff"
@@ -221,26 +231,6 @@ def read_transcript(transcript, sidechain=False):
     return tokens or 0, model, None, None
 
 
-def near_autocompact(transcript, root, sidechain=False):
-    """The transcript's thread has not compacted since its last usage, which is within NEAR of its autocompact point:
-    it is the one compacting now, or will be on its next request."""
-    tokens, model, *_ = read_transcript(transcript, sidechain)
-    return tokens > 0 and tokens >= thresholds(model, root)[0] - NEAR
-
-
-def main_compacting(transcript, root):
-    """Whether a SessionStart(compact) is the main thread's. Claude Code (2.1.322) runs SessionStart(compact) for a subagent's
-    compaction too, with the same session_id and transcript_path and no agent_id, so the event can't say; and the main transcript
-    gets its compact_boundary only after the hooks have run. So: the main thread is at its autocompact point and no subagent
-    written in the last 10 minutes is at its own. Both or neither: not sure, so False (the next main-thread event finds the
-    boundary and pastes then)."""
-    if not near_autocompact(transcript, root):
-        return False
-    subagents = Path(str(transcript)).with_suffix("") / "subagents"
-    recent = [f for f in subagents.glob("*.jsonl") if f.stat().st_mtime > time.time() - 600] if subagents.is_dir() else []
-    return not any(near_autocompact(f, root, sidechain=True) for f in recent)
-
-
 def runs_own_copy(project):
     """A project that commits its own copy at .claude/hooks/ and registers it in its settings runs that copy instead. A copy
     nothing registers (the old user-level one, seen from a session started in the home folder) doesn't count."""
@@ -377,6 +367,29 @@ def resume_text(path):
             "Continue the task from where it stands; tell the user in one line that you resumed with this handoff.")
 
 
+def summary_instructions(state):
+    """What to tell the compaction's summarizer (PreCompact stdout): continue from the saved handoff, or stand in for it."""
+    if state:
+        path = state["handoff"]
+        at = datetime.fromtimestamp(Path(path).stat().st_mtime).strftime("%H:%M:%S")
+        return (f"Instructions from the handoff guard: this session saved a handoff at {path} ({at}); it is pasted back after this "
+                "compaction. If you don't see it being written, that happened in the latest messages, which are kept word for word "
+                "after this summary: treat it as saved and never list writing or checking it as a next step. Make the summary "
+                "continue from it: list every action completed after it was written (paths, short shas, commands and results, "
+                "decisions), then the exact next step.")
+    return ("Instructions from the handoff guard: no handoff was saved before this compaction, so write the summary to serve as one, "
+            "in bullets under Goal; State (commits with short sha, uncommitted files, where work stopped as path:line or the command); "
+            "Next (the exact next action first); Watch out (unverified items, failing tests, open questions). Name exact paths and commands.")
+
+
+def due_now(event, state, sfile, root, sid, tokens):
+    """Tell the model a compaction is being put off for its handoff: it never sees a PreCompact block, and the deferral can start
+    while no HANDOFF REQUIRED notice has fired. Said once (`told`), on the first event after a block."""
+    state["told"] = True
+    sfile.write_text(json.dumps(state))
+    return say(event, f"HANDOFF REQUIRED: the autocompact is due now (context {tokens} tokens) and is put off until this session's handoff is saved. Run the {SKILL} skill now: write {state.get('path') or handoff_path(root, sid)} with the Write tool, check it and commit only that file (skip the commit if handoff/ is gitignored). Other tools are blocked until then.")
+
+
 def main():
     data = json.load(sys.stdin)
     # A subagent's events carry its agent_id but the parent's session_id, so they would share the parent's state file: a
@@ -394,16 +407,48 @@ def main():
     state = json.loads(sfile.read_text()) if sfile.exists() else {"status": "off"}
 
     transcript = data.get("transcript_path", "")
+    if event == "PreCompact":
+        tokens, model, _, ceiling = read_transcript(transcript)
+        autocompact = thresholds(model, root, ceiling)[0]
+        done = state["status"] == "done" and state.get("handoff") and Path(state["handoff"]).exists()
+        first = state.get("deferred_at", tokens)
+        room = model_window(model) - 23_000 - tokens >= HEADROOM  # no room at a model's full window: its autocompact is 10k below the hard limit
+        if (data.get("trigger") == "auto" and not done and os.environ.get("HANDOFF_DEFER", "1") != "0"
+                and state.get("defers", 0) < DEFER_MAX and tokens - first < DEFER_GROWTH and room):
+            now = time.time()
+            if state["status"] != "pending":
+                state.update(status="pending", since=now, armed=now, root=root, at=tokens or autocompact,
+                             path=str(handoff_path(root, sid)))
+            state.update(defers=state.get("defers", 0) + 1, deferred_at=first)
+            sfile.write_text(json.dumps(state))
+            print(f"handoff-guard: compaction put off ({state['defers']}/{DEFER_MAX}, {tokens - first} tokens past the first) until this session's handoff is saved", file=sys.stderr)
+            sys.exit(2)  # SystemExit isn't an Exception: main's guard below lets the exit code reach Claude Code
+        state["compacting"] = time.time()
+        manual = data.get("trigger") != "auto"
+        if done and not (manual and (data.get("custom_instructions") or "").strip()):
+            print(summary_instructions(state))
+        elif not done and not manual:
+            state["standin"] = True  # SessionStart(compact) says the summary stands in for the handoff
+            print(summary_instructions(None))
+        sfile.write_text(json.dumps(state))
+        return
+
     if event == "SessionStart":
-        # A subagent's compaction runs this too (see main_compacting), so the state stays: the next main-thread event re-arms
-        # the guard once the main transcript shows the compaction. The handoff is pasted now only if the compaction is surely
-        # the main thread's, so it never lands in a subagent's context; otherwise it is pasted at that next event.
-        if data.get("source") == "compact" and state["status"] != "off":
+        # PreCompact ran for this compaction (a subagent's doesn't run it), so a recent marker means it is the main thread's.
+        # Delete the state first: that re-arms the guard.
+        if data.get("source") == "compact" and time.time() - state.get("compacting", 0) < 900:
+            sfile.unlink(missing_ok=True)
             path = state.get("handoff")
-            if path and Path(path).exists() and main_compacting(transcript, root):
-                state["pasted"] = time.time()
-                sfile.write_text(json.dumps(state))
-                say(event, resume_text(path))
+            if path and Path(path).exists():
+                text = resume_text(path)
+                if state.get("defers"):
+                    saved = datetime.fromtimestamp(Path(path).stat().st_mtime).strftime("%H:%M:%S")
+                    text += (f"\n\nThe guard saw this handoff saved at {saved} while the compaction waited for it: don't write it again, "
+                             f"whatever the summary above says. It was written in a hurry, so the {SKILL} skill's step 2 checks didn't run: "
+                             "run them on it now (branch, sha, paths, uncommitted files), fix the file if one fails, then carry on from its Next.")
+                say(event, text)
+            elif state.get("standin"):
+                say(event, "The compaction ran before this session's handoff was saved; the summary above was written to stand in for it. Carry on with the task; no handoff is needed now.")
         for old in STATE_DIR.glob("*"):  # tidy state from sessions that ended
             if old.is_file() and old.stat().st_mtime < time.time() - 3 * 86400:
                 old.unlink(missing_ok=True)
@@ -453,8 +498,12 @@ def main():
             if local:
                 prune(root)
             return say(event, f"Handoff {'saved' if local else 'committed'} ({state['handoff']}). Tools are unblocked: carry on with the task. After the autocompact the handoff is pasted back in as \"Previous context\".")
+        if state.get("defers") and not state.get("told"):
+            return due_now(event, state, sfile, root, sid, tokens)
 
     if state["status"] == "pending" and event == "UserPromptSubmit":
+        if state.get("defers") and not state.get("told"):
+            return due_now(event, state, sfile, root, sid, tokens)
         say(event, "Reminder: the handoff is still required; finish it before other work.")
 
 
