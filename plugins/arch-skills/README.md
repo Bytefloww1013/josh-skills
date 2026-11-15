@@ -13,11 +13,9 @@ Claude loads a skill by itself when the task fits its description. You can also 
 
 ## Install
 
-From the folder that holds `.claude-plugin/marketplace.json` (the parent of this folder):
-
 ```
-claude plugin marketplace add ./
-claude plugin install arch-skills@arch-skills-local
+claude plugin marketplace add Bytefloww1013/josh-skills
+claude plugin install arch-skills@josh-skills
 ```
 
 To try it without installing: `claude --plugin-dir ./arch-skills`.
