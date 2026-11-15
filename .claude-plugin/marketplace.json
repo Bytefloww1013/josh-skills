@@ -9,6 +9,11 @@
       "name": "byte-stack",
       "source": "./plugins/byte-stack",
       "description": "bmode for bphs-connect: its playbooks, the principle skills it applies under the repo's rules, its helper skills, and the byte-agent delegate subagent. For any repo: the byte-handoff skill and the handoff guard hook that asks for it before the autocompact."
+    },
+    {
+      "name": "arch-skills",
+      "source": "./plugins/arch-skills",
+      "description": "Architecture decision review, PR erosion check, architecture review report and repo navigability audit, with one shared principle library. Includes a reminder hook that suggests the PR check before gh pr create."
     }
   ]
 }

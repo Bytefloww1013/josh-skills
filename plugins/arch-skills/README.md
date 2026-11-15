@@ -1,0 +1,33 @@
+# arch-skills
+
+Four skills that help a coding agent keep a codebase sound. They share one library of principles (connascence, coupling metrics, erosion vectors, contracts, fitness functions, severity) and a project profile for bphs-connect.
+
+| Skill | Use it when |
+|---|---|
+| `arch-skills:architecture-decision-review` | You must choose between design options before you build. Output: options, connascence table, decision, ADR. |
+| `arch-skills:pr-erosion-check` | A PR or branch is ready for review, or an agent says it is done. Output: merge verdict with file:line findings, including scope against the linked issue. |
+| `arch-skills:architecture-review-report` | You have a plan, spec, RFC or GitHub issues to review. Output: element-by-element report with severity and cited principle. |
+| `arch-skills:repo-navigability-audit` | You want to know how easily an agent or a new person finds their way in a repo. Output: scored audit with fixes. |
+
+Claude loads a skill by itself when the task fits its description. You can also call one by name, for example `/arch-skills:pr-erosion-check 41`.
+
+## Install
+
+From the folder that holds `.claude-plugin/marketplace.json` (the parent of this folder):
+
+```
+claude plugin marketplace add ./
+claude plugin install arch-skills@arch-skills-local
+```
+
+To try it without installing: `claude --plugin-dir ./arch-skills`.
+
+The scripts need Python 3 (standard library only). `pr-erosion-check` uses `git` and, for PRs, `gh`.
+
+## The hook
+
+`hooks/hooks.json` adds one PreToolUse hook. When Claude is about to run `gh pr create`, the hook adds a reminder to run `pr-erosion-check` first. It never blocks the command. To turn it off, delete `hooks/hooks.json`, or disable the plugin's hooks in your settings.
+
+## Editing
+
+Do not edit the skills here. Edit the plain skill folders and `_shared/` next to `plugin/`, then run `python3 _shared/sync.py`. It copies the shared files into each skill and mirrors the skills into this plugin. `python3 _shared/sync.py --check` fails if anything drifted.
