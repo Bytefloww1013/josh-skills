@@ -10,12 +10,12 @@
 6. Write or update the skill's doc at `docs/skills/<name>.md`. A new doc comes from the repo's `byte-docs-add` skill, run as `skill <name>` with the permission its first lines ask for. Docs are written by `docs/directives/writing-docs.md`. The doc has five sections in order: What it does and when it's used, Install, Run, Arguments, Gotchas. Install says `In this repo, no install.` for a skill written here, or the `npx skills add` line from the skill's lock entry. Arguments covers every argument in the skill's `argument-hint`.
 7. For a new doc, run `bun run docs:gen`; it adds the doc to `docs/README.md` and to the index in `README.md`. After any skill or doc edit, run `bun run docs:check`: it fails a skill with no doc, sections out of order, an Install line that differs from the lock, and an Arguments section that leaves out an `argument-hint` argument.
 8. Run `bun run docs:stale`. A skill doc's `sources` lists the skill's files (`.claude/skills/<name>/**` or its `SKILL.md`), and for an installed skill `skills-lock.json` too. A skill edit without a doc edit fails, and so does a `skills-lock.json` change for each installed skill's doc, unless the PR body has `docs-unaffected: <doc> - <reason>` for it. Locally the body is `tmp/pr-body.md`, and it must name the branch's issue (`#<N>`).
-9. Open the PR per `playbooks/opening-a-pr.md` and `docs/directives/git-and-prs.md`. A past skill change: branch `chore/update-issue202-matt-skills`, PR title `chore(skills): update the vendored Matt Pocock skills and add software-factory`, merged as #203.
+9. Open the PR per `playbooks/opening-a-pr.md` and `docs/directives/git-and-prs.md`. A past skill change: branch `chore/remove-issue545-unused-skills`, PR title `chore(skills): remove 16 unused or duplicate skills`, merged as #548.
 10. Before merge, run the `byte-docs-review` skill as `pr` to check the skill's doc against the skill, with the permission its first lines ask for. `--no-post` posts nothing. It runs locally only.
 
 **Not established in bphs-connect:**
 
-- When a skill needs `agents/openai.yaml`, or what its fields mean. 39 of 48 skill folders have one; the nine without are `add-module`, `byte-docs-add`, `byte-docs-glossary`, `byte-docs-review`, `byte-gh-issue`, `byte-gh-issue-claim`, `byte-handoff`, `review-team` and `software-factory`.
+- When a skill needs `agents/openai.yaml`, or what its fields mean. 24 of 33 skill folders have one; the nine without are `add-module`, `byte-docs-add`, `byte-docs-glossary`, `byte-docs-review`, `byte-gh-issue`, `byte-gh-issue-claim`, `byte-handoff`, `improve` and `review-team`.
 - A way to test a skill's effect on agent behavior. See `playbooks/eval.md`.
 
 **Reply:** what the skill does, its invocation choice, its doc path, and the checks run with their results.

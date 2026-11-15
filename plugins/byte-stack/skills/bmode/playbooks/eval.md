@@ -3,7 +3,7 @@
 **bphs-connect has no harness to measure how a skill change moves agent behavior. Say so, then run the checks it has.**
 
 Not established in bphs-connect: eval or benchmark tooling for skills or the repo (no eval or bench scripts, `package.json` entries, directories or files).
-Not established in bphs-connect: a script, test or CI step that checks what the `writing-beats`, `writing-fragments` or `writing-shape` skills make an agent do. `docs:check` reads only their docs and `argument-hint` (`scripts/docs/skills.ts`).
+Not established in bphs-connect: a script, test or CI step that checks what any skill makes an agent do. `docs:check` reads only a skill's doc and `argument-hint` (`scripts/docs/skills.ts`).
 Nothing runs AI in CI (`docs/skills/byte-docs-review.md`).
 
 1. Tell the user no eval harness exists. The checks below cover the skill's doc, not the agent's behavior.
