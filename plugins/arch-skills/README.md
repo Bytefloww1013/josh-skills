@@ -18,7 +18,7 @@ claude plugin marketplace add Bytefloww1013/josh-skills
 claude plugin install arch-skills@josh-skills
 ```
 
-To try it without installing: `claude --plugin-dir ./arch-skills`.
+To try it without installing, from the josh-skills root: `claude --plugin-dir plugins/arch-skills`.
 
 The scripts need Python 3 (standard library only). `pr-erosion-check` uses `git` and, for PRs, `gh`.
 
@@ -28,4 +28,6 @@ The scripts need Python 3 (standard library only). `pr-erosion-check` uses `git`
 
 ## Editing
 
-Do not edit the skills here. Edit the plain skill folders and `_shared/` next to `plugin/`, then run `python3 _shared/sync.py`. It copies the shared files into each skill and mirrors the skills into this plugin. `python3 _shared/sync.py --check` fails if anything drifted.
+Edit the skills here, in `skills/<name>/`. There is no build step.
+
+Each skill carries its own copy of the reference files and scripts it shares with the others, so it works when installed alone. `severity.md`, `fitness-functions.md` and `project-bphs-connect.md` are in all four skills, and other files in two or three. When you change a shared file, change every copy, then run `plugins/arch-skills/check-copies.sh`. It names each file whose copies differ and exits 1 if any do.
