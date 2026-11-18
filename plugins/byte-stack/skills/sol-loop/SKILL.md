@@ -15,12 +15,13 @@ of scope creep and don't be scared to push back.
 ## Budget
 
 - Default: 3 rounds total. Round 1 is full. Later rounds check only
-  changed code and open findings.
+  changed instructions and code, and open findings.
 - Extend to 5 only for security, permissions, auth, data loss, or
   state/concurrency, while a blocker or should stays open with evidence. Or when
   the user asks.
-- Stop early if a round returns only nits. Declined nits and comment,
-  doc, or format-only fixes need no new round.
+- Stop early on approval if only nits remain and the behavior is unchanged
+  since review. Declined nits and edits that leave behavior unchanged need
+  no new round on their own.
 - One reviewer only. Sol must not start subagents or reviewers.
 - Keep a ledger: id, severity, outcome, usage if returned. Never guess it.
 
@@ -77,6 +78,7 @@ Skip style unless it hides a bug. Hold to the smallest change. Flag code,
 tests, or guards the intent does not need. Other paths, rare cases, small
 perf, extra compat: nits.
 blocker = intended case wrong. should = real bug callers will hit, in intent. nit = rest.
+Use CHANGES if there is any blocker or should finding, and APPROVE otherwise.
 Reply:
 VERDICT: APPROVE or CHANGES
 S1 [blocker|should|nit] <file>:<line> <claim>. Fix: <suggestion> (stable ids)
@@ -86,6 +88,7 @@ S1 [blocker|should|nit] <file>:<line> <claim>. Fix: <suggestion> (stable ids)
 
 Check each finding and severity yourself. Another path, rare case, or
 small cost is a nit, whatever label it came with.
+Treat a verdict that conflicts with its reported findings as invalid.
 
 - Agree: smallest fix. Prefer delete or narrow over new lock, cache,
   helper, or option. Fix the case that happened. Add one focused test
@@ -98,11 +101,13 @@ review grew the diff, cut first. Do not agree just to end the loop.
 
 ## 4. Next round
 
-Start one only if budget remains and a blocker or should is open, behavior code
-changed, or approval does not cover the current behavior diff. Use a fresh
+Start one only if budget remains and a blocker or should is open, behavior
+changed (including workflow instructions in Markdown), or approval does not
+cover the current behavior diff. Use a fresh
 `delegate_task` in T3, or follow up the saved native ID. Send the round 1 brief,
 the ledger (`fixed:` / `disagree:` / `declined:` + evidence), the same base
-diff, and the change since last round. Tell Sol: open ids and changed code only.
+diff, and the change since last round. Tell Sol: review only open findings and
+instructions or code changed since the last round.
 Mark each old id `resolved` or `still open: <reason>`.
 
 ## 5. Stop and ship
