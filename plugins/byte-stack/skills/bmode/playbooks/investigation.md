@@ -2,7 +2,7 @@
 
 **You own the answer. Read only.** The deliverable is a cited explanation or a recommendation, not a code change.
 
-1. For code, use CodeGraph before Read, Grep, Glob, find or an Explore agent, and trust its results (`CLAUDE.md`). Read Markdown, config, JSON and SQL migrations directly: CodeGraph does not index them. If the MCP tool is unavailable, run `codegraph explore "<query>"` in the shell. A SessionStart hook, `scripts/codegraph-ensure.sh`, builds or syncs the index. Do not run `codegraph init`. Where `codegraph` is not installed (a cloud session), there is no index, so use Read, Grep and Glob.
+1. For code, use CodeGraph before Read, Grep, Glob, find or an Explore agent, and trust its results (`AGENTS.md`). Read Markdown, config, JSON and SQL migrations directly: CodeGraph does not index them. If the MCP tool is unavailable, run `codegraph explore "<query>"` in the shell. A SessionStart hook, `scripts/codegraph-ensure.sh`, builds or syncs the index. Do not run `codegraph init`. Where `codegraph` is not installed (a cloud session), there is no index, so use Read, Grep and Glob.
 2. Start from the repo's own maps:
    - Architecture: `docs/references/architecture.md`, then `docs/references/modules.md` and the module's README.
    - Domain words: `docs/references/project-glossary.md`.
