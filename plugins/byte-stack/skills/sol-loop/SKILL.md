@@ -68,7 +68,10 @@ Round 1 brief (T3 children get no history):
 Review only. Do not edit, commit, push, comment on PRs, or start subagents.
 Repo: <abs path> Base: <sha> Intent: <intent> Out of scope: <scope> Checks: <results>
 See: git diff <base> [-- <paths>]; git status --short (read untracked).
-Read surrounding code. 
+Read surrounding code. If you have a codegraph_explore tool and <Repo>/.codegraph/
+exists, call it before grep or reading files, with projectPath <Repo>: it returns
+source, callers and blast radius. The index is already built; never run
+codegraph init, index, sync or uninit. Without either, use rg.
 Find: 
     - bugs 
     - broken callers 
