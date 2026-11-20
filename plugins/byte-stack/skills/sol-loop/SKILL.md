@@ -121,7 +121,8 @@ or budget ends. Show both sides in 2-3 lines each. The user decides.
 Budget end is not approval.
 
 Do not push during the loop. Push after agreement only if the user asked
-to push, ship, or update the PR. If you push to a PR, add above the model
+to push, ship, or update the PR. When bmode runs the loop, return the
+outcome to its playbook, whose push and PR rules apply instead. If you push to a PR, add above the model
 blurb:
 
 `Reviewed with sol-loop: <N> rounds with <model>. Sol verdict: approved`.

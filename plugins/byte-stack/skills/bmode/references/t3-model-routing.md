@@ -43,11 +43,12 @@ Applies when the run is inside T3, the coordinator is the main thread, and `orch
 | 30% or more          | `reasoningEffort: high`                         |
 | 1% to 29%            | `reasoningEffort: medium`                       |
 | 0% (limit gone)      | none: `code-review` on Claude, and say so       |
+| `unknown`            | `reasoningEffort: medium`, with the fallback below |
 
-When it applies, Opening a PR step 7 runs `byte-stack:sol-loop` on the branch against `origin/main` after `pr-erosion-check` and before the push, with sol-loop's own budget and brief. The coordinator runs it for each delegate's branch too, since T3 children start no reviewers. Sol is the change's code review: it takes the place of `code-review`'s Standards and Spec sub-agents wherever a playbook names them, and of any extra fresh Claude review round. The review agents keep their triggers and the routing above.
+When it applies, Opening a PR step 7 runs `byte-stack:sol-loop` on the branch against `origin/main` after `pr-erosion-check` and before the PR is opened, with sol-loop's own budget and brief. Commit each fix it leads to as step 7 commits an erosion fix, rerun `docs/verify/quick-check.sh`, and check that the commit being pushed holds the diff Sol last reviewed. sol-loop hands its outcome back here: the playbook's push and PR rules apply, not sol-loop's step 5 push rule. Later pushes to the same PR (a babysit fix, a review answer) get no new Sol round unless the user asks. The coordinator runs it for each delegate's branch too, since T3 children start no reviewers. Sol is the change's code review: it takes the place of `code-review`'s Standards and Spec sub-agents wherever a playbook names them, and of any extra fresh Claude review round. The review agents keep their triggers and the routing above.
 
 - APPROVE on the current diff: carry on to the title, push and merge rules as before.
-- The budget ends with a blocker or should open: push and open the PR as the playbook allows, but don't merge it. Flag it to the user with the open findings and both sides.
+- The budget ends with a blocker or should open: push and open the PR as the playbook allows, but don't merge it. Put a `Sol hold:` line with each open finding under `## How it was checked`, and flag it to the user with both sides. The hold lasts until the user clears it or a later Sol round approves.
 - A Sol delegate that fails on the usage limit sets the tier to gone for the run: run `code-review` instead and say so in one line.
 
 Why: Sol and Gemini are there to take review work off Claude (the user, 20 Nov 2026). Before this section, Sol ran only when a prompt named `sol-loop`, so from 19 Nov every review ran on Claude while the `codex` window sat unused.
