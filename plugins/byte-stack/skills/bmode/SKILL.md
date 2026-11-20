@@ -78,7 +78,7 @@ Read the leaf in full for any principle you apply (Non-negotiables). Each leaf i
 
 **Delegation**
 
-- **Guard the Context Window.** A bulk read is coming, such as a long log, a HAR or trace, a transcript, a wide diff or a fan-out plan. For code, call `codegraph_explore` first. Hand other bulk to a subagent and keep only its reduced finding in the main thread. The handoff guard ignores subagents, so cap each one's files and turns in its brief. On HANDOFF REQUIRED, the handoff comes first.
+- **Guard the Context Window.** A bulk read is coming, such as a long log, a HAR or trace, a transcript, a wide diff or a fan-out plan. For code, call `codegraph_explore` first. Hand other bulk to a subagent and keep only its reduced finding in the main thread. The handoff guard ignores subagents, so cap each one's files and turns in its brief. Under T3, that subagent is Gemini 4 Hydrogen when Antigravity offers it (`references/t3-model-routing.md`). On HANDOFF REQUIRED, the handoff comes first.
 - **Never Block on the Human.** About to ask "should I do X?" about reversible work on the issue's branch that no gate covers (after the go-ahead, when the work has a plan), such as a choice inside the plan, the order of slices, a fix for a failing check, or a line for the issue notes. Decide, do it, and report why (Autonomy, "Decide and report"). It covers nothing else. Every gate in Autonomy, the plan's question rounds, and the gates of user-invoked and vendored skills stay with the user.
 
 **Meta**
@@ -93,10 +93,11 @@ The byte-stack helper skills ship next to this skill too, at `../<name>/SKILL.md
 - **`architect`.** Its Phase C goes on to implement with no checkpoint. Under a feature plan the go-ahead is the checkpoint: run Phases A and B during the question rounds, put the sketch and its rationale in the plan's `## Decisions`, and start Phase D after the go-ahead. The plan is never committed, so the PR body's `## What and why` carries the synthesis decision.
 - **`figure-it-out`.** Its Phase D names a `show-me-your-work` skill that byte-stack does not ship. Keep the trail in the plan's `## Decisions`, and put what a reviewer needs from it in the PR body, since the plan is never committed (`docs/directives/plans.md`).
 - **`no-comments`.** It cannot run here. The `comment-sicko` agent and the adapter doc it names are not in byte-stack.
+- **`council-review`.** Only the user starts it, by saying "council". No playbook step runs it, not even before a PR. When the direction of a change looks uncertain, you may suggest it in one line.
 
 ### arch-skills
 
-bphs-connect's `.claude/settings.json` turns on the arch-skills plugin from `Bytefloww1013/josh-skills`. Its four skills are model-invocable: a step that names one runs it through the Skill tool as `arch-skills:<name>`, not with Read. Each reads its profile of this repo (`references/project-bphs-connect.md`) first. The repo's rules and gates win over a skill and over that profile (`docs/skills/arch-skills.md`).
+bphs-connect's `.claude/settings.json` turns on the arch-skills plugin from `Bytefloww1013/josh-skills`. Its four skills are model-invocable: a step that names one runs it through the Skill tool as `arch-skills:<name>`, not with Read. Each reads its profile of this repo (`references/project-bphs-connect.md`) first. The repo's rules and gates win over a skill and over that profile (`docs/skills/arch-skills.md`). Under T3, when Antigravity offers Gemini 4 Neon, `architecture-decision-review`, `architecture-review-report` and `repo-navigability-audit` run on Neon as T3 delegates, and `pr-erosion-check` stays here (`references/t3-model-routing.md`). Everything below applies either way.
 
 - **`architecture-decision-review`.** Runs in the Feature, Multi-phase plan, Refactoring and New migration playbooks, before a design choice that adds, splits or moves a module, table, public API, hook, slot or dependency. Quick mode for a two-way door, full mode for a one-way door. It decides and records one choice; when the choice has no precedent, `architect` (which runs `arena`) builds the competing designs first and the review records the pick (Exhaust the Design Space). Its decision goes in the plan's `## Decisions`, and from there the PR body's `## What and why`. It writes its ADR draft into `docs/adr/` by itself: keep the draft in the plan instead, in the repo's ADR format with status proposed, and write the file only on the user's yes.
 - **`architecture-review-report`.** Runs on a written plan before asking for the go-ahead, and on a set of issues before a queue run starts. Put its report under `tmp/` or in the reply, never in the repo. Answer each Critical or High finding in the plan, or in the issue on the user's yes, since an edit there posts outside the repo. Put each Gap to the user as a question. A clean report is not the go-ahead.
@@ -151,11 +152,11 @@ Hand bulk reads to subagents per Guard the Context Window, and split their write
 - **`wayfinder`** (vendored). One fresh subagent per research ticket, which runs the `research` skill and pushes a throwaway `research/<name>` branch with no PR.
 - **`grilling`** (vendored). A fresh sub-agent finds each fact the questions need, so the user is asked only for decisions.
 - **`codebase-design`** (vendored, `DESIGN-IT-TWICE.md`). Three or more sub-agents in parallel, each with a fresh context window.
-- **Agents in `.claude/agents/`.** The review agents `module-boundary-reviewer`, `migration-reviewer` and `access-reviewer` are read only, with the tools Read, Grep, Glob and `codegraph_explore`. Each answers `no findings` with the files it read when no rule is broken. The six `byte-docs-*` agents there are the byte-docs skills' own, launched by those skills by name.
+- **Agents in `.claude/agents/`.** The review agents `module-boundary-reviewer`, `migration-reviewer` and `access-reviewer` are read only, with the tools Read, Grep, Glob and `codegraph_explore`. Each answers `no findings` with the files it read when no rule is broken. The six `byte-docs-*` agents there are the byte-docs skills' own, launched by those skills by name. Under T3, `module-boundary-reviewer` and the `byte-docs-*` agents run on Gemini, each as its own delegate, and `access-reviewer` and `migration-reviewer` stay on Claude (`references/t3-model-routing.md`).
 - **`pr-erosion-check`** (arch-skills). For a large PR, or a Critical or High finding that rests on judgment, one fresh subagent given only the restated claim, the hunk and the principle; the finding stays only if it agrees. For a boundary finding, the `module-boundary-reviewer` agent is that check (the skill's profile names it).
 - **byte-stack helpers** (Helpers). Spawn each subagent a helper starts as a `byte-agent`, so it reads this file first: an arena candidate or judge, an architect runner, a how explorer or explainer, a swarm worker. No `arena runners`, `arena cross-judge pool`, `architect runners`, `how explorer` or `how explainer` line is set here, so each helper's default model applies. A model id such as `claude-opus-5-5-xhigh` is the Agent tool's `model: "opus"` with `effort: "xhigh"`.
 
-Not established in bphs-connect: a default subagent type or a model per role outside the skills and helpers above, a background or foreground default, or a repo-wide rule on reusing a subagent.
+Not established in bphs-connect: a default subagent type or a model per role outside the skills and helpers above and the T3 routing in `references/t3-model-routing.md`, a background or foreground default, or a repo-wide rule on reusing a subagent.
 
 ## Writing the reply
 
@@ -163,7 +164,7 @@ Each playbook's **Reply:** line names what to report. Add to it:
 
 - **Principles.** Each principle that shaped a decision, with the choice it changed, cited only from leaves read this session (Non-negotiables). When you cite Build the Lever, give the lever's command.
 - **Calls made without asking.** Each one with its reason, so the user can correct it (Never Block on the Human).
-- **Helpers.** Each helper you ran and what came of it, such as the base arena picked or the fact blast-radius proved. Report each arch-skills run beside them with its verdict: the decision and its mode, the report's counts, pr-erosion-check's verdict, or that the plugin was unavailable.
+- **Helpers.** Each helper you ran and what came of it, such as the base arena picked or the fact blast-radius proved. Report each arch-skills run beside them with its verdict: the decision and its mode, the report's counts, pr-erosion-check's verdict, or that the plugin was unavailable. Under T3, give each routed step's model and level, and any fallback to Opus.
 
 Write the reply through the **unslop** helper.
 
