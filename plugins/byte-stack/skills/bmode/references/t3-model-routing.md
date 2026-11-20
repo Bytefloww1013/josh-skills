@@ -1,6 +1,6 @@
 # Model routing under T3
 
-Applies only when all three hold: the run is inside T3 Code (the `mcp__t3-code__*` tools exist), the coordinator is the main thread (T3 children start no subagents), and `orchestrator_capabilities` (called once per thread) lists provider `antigravity` with `canRunChildTask: true` and the model id the table names. Otherwise run every step as SKILL.md says, on Opus.
+Applies only when all three hold: the run is inside T3 Code (the `mcp__t3-code__*` tools exist), the coordinator is the main thread (T3 children start no subagents), and `orchestrator_capabilities` (called once per thread) lists provider `antigravity` with `canRunChildTask: true` and the model the table names. T3 lists a model in one of two shapes, and either counts: one id per level (`gemini-4-neon-high`), or the base id (`gemini-4-neon`) with a `thought_level` option. Otherwise run every step as SKILL.md says, on Opus, and say so under Helpers. The Sol review below has its own gate.
 
 ## Antigravity tier
 
@@ -8,8 +8,8 @@ Before each routed step, run `python3 -I <byte-stack>/skills/council-review/scri
 
 | `gemini-5h` remaining | Neon model             |
 | --------------------- | ---------------------- |
-| 50% or more           | `gemini-4-neon-high`   |
-| 1% to 49%             | `gemini-4-neon-medium` |
+| 50% or more           | Neon, `high`           |
+| 1% to 49%             | Neon, `medium`         |
 | 0% (limit gone)       | none: Opus, as before  |
 
 Hydrogen draws on the same `gemini-5h` bucket. At 0%, scout work goes back to Claude subagents too.
@@ -23,16 +23,34 @@ A Neon or Hydrogen delegate that fails because the usage limit has been reached 
 | `arch-skills:architecture-decision-review`                   | Neon, by tier            | `delegate_task`, role `review`, isolation `shared`, mode `async`                          |
 | `arch-skills:architecture-review-report`                     | Neon, by tier            | same                                                                                      |
 | `arch-skills:repo-navigability-audit`                        | Neon, by tier            | same                                                                                      |
-| Scout work: the bulk reads Guard the Context Window hands to a subagent (a log, HAR, trace, transcript, wide diff), an investigation's search after CodeGraph, a trace-forensics parse | `gemini-4-hydrogen-high` | `delegate_task`, role `research`, isolation `shared`, mode `async` |
-| `module-boundary-reviewer`; the `byte-docs` finder, drafter and auditor | `gemini-4-hydrogen-high` | `delegate_task`, role `review`, isolation `shared`, mode `async`; the brief points the child at the agent's file (template below). The coordinator sets the severity itself. The agent's format has no severity scale, and in the bake-off the two Gemini models rated the same finding differently (High, and "Severity 1"). |
+| Scout work: the bulk reads Guard the Context Window hands to a subagent (a log, HAR, trace, transcript, wide diff), an investigation's search after CodeGraph, a trace-forensics parse | Hydrogen, `high` | `delegate_task`, role `research`, isolation `shared`, mode `async` |
+| `module-boundary-reviewer`; the `byte-docs` finder, drafter and auditor | Hydrogen, `high` | `delegate_task`, role `review`, isolation `shared`, mode `async`; the brief points the child at the agent's file (template below). The coordinator sets the severity itself. The agent's format has no severity scale, and in the bake-off the two Gemini models rated the same finding differently (High, and "Severity 1"). |
 | The `byte-docs` refuters | Neon, by tier | same |
 | `access-reviewer`, `migration-reviewer` | **Claude, as now** | In the bake-off on #668, Neon found 1 of the 2 access gaps Claude found and Hydrogen found neither. A missed access or migration problem is silent, and it is costly. |
 
-Target: `{ providerInstanceId: "antigravity", model: "<id>" }`. The effort is in the model id, so set no `effort` option. Follow each delegate's `next`, and don't poll it.
+Target, in the shape capabilities lists: `{ providerInstanceId: "antigravity", model: "gemini-4-neon-high" }` with no options, or `{ providerInstanceId: "antigravity", model: "gemini-4-neon", options: { thought_level: "high" } }`. The same holds for Hydrogen. T3 switched from the first shape to the second on 20 Nov 2026, and a table that named only the first sent every step to Opus. Follow each delegate's `next`, and don't poll it.
 
 **A named agent.** The delegate takes the place of the skill's "launch agent X" step, and everything else in the skill stays the same. Keep each skill's information barrier: a refuter gets only what the skill gives it (for example, `byte-docs-review-refuter` never gets the finder's `why`), so each agent is a separate delegate with its own brief. Some of these agents are not read only. The `byte-docs` finder, drafter and auditor write their findings to the scratchpad, and `byte-docs-glossary-refuter` has every tool. So the brief gives the absolute scratchpad path, and gives each agent the same tool limit its file sets.
 
 Not routed: `codegraph_explore` (still first for code), `pr-erosion-check`, Decision subagents, `review-team` reviewers, byte-stack helpers' runners and code-writing delegates.
+
+## Sol review before the push
+
+Applies when the run is inside T3, the coordinator is the main thread, and `orchestrator_capabilities` lists provider `codex` with `canRunChildTask: true` and a Sol model (pick the latest `gpt-*-sol`). The `codex` row of `provider-usage.py` sets the effort:
+
+| `codex` 5h remaining | Sol effort                                      |
+| -------------------- | ----------------------------------------------- |
+| 30% or more          | `reasoningEffort: high`                         |
+| 1% to 29%            | `reasoningEffort: medium`                       |
+| 0% (limit gone)      | none: `code-review` on Claude, and say so       |
+
+When it applies, Opening a PR step 7 runs `byte-stack:sol-loop` on the branch against `origin/main` after `pr-erosion-check` and before the push, with sol-loop's own budget and brief. The coordinator runs it for each delegate's branch too, since T3 children start no reviewers. Sol is the change's code review: it takes the place of `code-review`'s Standards and Spec sub-agents wherever a playbook names them, and of any extra fresh Claude review round. The review agents keep their triggers and the routing above.
+
+- APPROVE on the current diff: carry on to the title, push and merge rules as before.
+- The budget ends with a blocker or should open: push and open the PR as the playbook allows, but don't merge it. Flag it to the user with the open findings and both sides.
+- A Sol delegate that fails on the usage limit sets the tier to gone for the run: run `code-review` instead and say so in one line.
+
+Why: Sol and Gemini are there to take review work off Claude (the user, 20 Nov 2026). Before this section, Sol ran only when a prompt named `sol-loop`, so from 19 Nov every review ran on Claude while the `codex` window sat unused.
 
 ## The brief
 
@@ -91,6 +109,7 @@ Under Helpers, each routed step says which model ran it and why. For example:
 
 - `architecture-review-report`: Gemini 4 Neon (High), tier ≥50%: 0 Critical, 2 High, 1 Gap.
 - `architecture-review-report`: Opus, Antigravity limit reached.
+- Sol review: `gpt-6.2-sol` (High), `codex` 100%: 2 rounds, APPROVE, 1 should fixed.
 
 ## Why these models: the bake-off of 19 Nov 2026 (Neon High and Hydrogen High; the reference is what the Claude reviewer found)
 

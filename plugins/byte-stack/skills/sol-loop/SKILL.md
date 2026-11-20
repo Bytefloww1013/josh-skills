@@ -1,6 +1,6 @@
 ---
 name: sol-loop
-description: Use when the user says "sol loop".
+description: Use when the user says "sol loop", or when bmode's Opening a PR step runs it under T3.
 ---
 
 # sol-loop

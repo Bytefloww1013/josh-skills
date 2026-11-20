@@ -36,7 +36,7 @@ For a UI change, take the screenshots before the council starts. DeepSeek cannot
 | Seat | Default | By 5-hour usage left | When the seat is down |
 | --- | --- | --- | --- |
 | Claude | Opus 5.5, High | - | DeepSeek |
-| Gemini | Gemini 4 Neon, High | 50% or more: `gemini-4-neon-high`. 20% to 49%: `gemini-4-neon-medium`. Under 20%: `gemini-4-hydrogen-high`. 0%: DeepSeek. | DeepSeek |
+| Gemini | Gemini 4 Neon, High | 50% or more: Neon `high`. 20% to 49%: Neon `medium`. Under 20%: Hydrogen `high`. 0%: DeepSeek. | DeepSeek |
 | GPT | GPT-6.2 Sol, High | 50% or more: `reasoningEffort: high`. Under 50%: `medium`. 0%: DeepSeek. | DeepSeek |
 | Fallback | DeepSeek V4.1 Flash Free (`opencode/deepseek-v4.1-flash-free`), `variant: max` | - | - |
 
@@ -53,7 +53,7 @@ How to start each seat:
 
 - **In T3 Code:** call `orchestrator_capabilities` once per thread. Start every seat with `delegate_task`, `mode: async`, `role: review`, `isolation: shared`, all in one message so they run in parallel. Use these targets:
   - Claude: `claudeAgent`, `claude-opus-5-5`, `{effort: high}`. When the coordinator is itself Claude, use the native `Agent` tool instead (`model: opus`, effort high, `run_in_background: false`), as T3 asks for a same-provider child.
-  - Gemini: `antigravity` with the model from the table.
+  - Gemini: `antigravity` with the model and level from the table, in the shape capabilities lists: an id per level (`gemini-4-neon-high`), or the base id (`gemini-4-neon`) with `options: { thought_level: "high" }`.
   - GPT: `codex`, `gpt-6.2-sol`, `{reasoningEffort: high|medium}`.
   - DeepSeek: `opencode`, `opencode/deepseek-v4.1-flash-free`, `{variant: max}`.
 
