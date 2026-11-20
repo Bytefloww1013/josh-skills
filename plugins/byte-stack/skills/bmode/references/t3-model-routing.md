@@ -40,11 +40,11 @@ A code-writing delegate (the `byte-agent` that builds one ticket, Orchestrate st
 
 - The gate at the top of this file holds, and the `gemini` row reads 50% or more just before the delegate starts. A delegate that started at 50% or more finishes on Neon even if the window drops.
 - The ticket is a `two-way-door`. It adds no migration and no `schema.ts` change, and it changes nothing about who may read or do what: no access code (`server/access/`, `shared/permissions.ts`, `web/src/nav/address.ts`, a nav entry, a route's `staticData`), no route's access declaration (`requires(...)`, `open()`), and no module's own permission check (such as `requireFormRead`). Those stay on Claude, as their reviewers do. If a Neon branch's diff changes any of them anyway, the coordinator treats it as a failed run (next bullet).
-- No Neon delegate has already failed this ticket in this run. A ticket a Neon delegate left red, or whose report the coordinator's checks contradicted, goes to a Claude `byte-agent` next. Before that delegate starts, free the ticket's branch name and keep Neon's work for the report: in Neon's worktree, `git branch -m <branch> <branch>-neon`. Remove that worktree and branch once the Claude branch is merged (Worktree cleanup).
+- No Neon delegate has already failed this ticket in this run. A ticket a Neon delegate left red, or whose report the coordinator's checks contradicted, goes to a Claude `byte-agent` next. Before that delegate starts, free the ticket's branch name and keep Neon's work for the report: in Neon's worktree, `git branch -m <branch> <branch>-neon`. Keep that worktree and branch, which may hold commits nothing else has, until the user says to discard them; then remove them as Worktree cleanup says.
 
 How: `delegate_task`, role `implementation`, isolation `worktree`, mode `async`, target Neon `high` in the shape capabilities lists (Target above). Brief it with the template "Neon implementor" below. Neon reads the bmode files by absolute path from the coordinator's own plugin folder, so they match what the coordinator runs. It never loads bmode as a skill: Antigravity truncates a skill body above 24 KB, and bmode's `SKILL.md` is larger. A probe on 20 Nov 2026 (Neon High, its own worktree) read all 219 lines of `SKILL.md`, a playbook and a principle leaf from the coordinator's plugin cache, and ran `bun install`, `vitest`, `gh` and the `codegraph` CLI there. T3's Antigravity children don't get the CodeGraph MCP tool, so the brief names the CLI.
 
-The coordinator judges a Neon branch exactly as a Claude one, and trusts nothing in its report it hasn't rerun (Orchestrate steps 5 and 6). It runs `docs/verify/quick-check.sh` in the worktree, `pr-erosion-check`, the review agents the change meets (access and migration on Claude), and the Sol review before the PR is opened. The push and the PR stay the coordinator's.
+The coordinator judges a Neon branch exactly as a Claude one, and trusts nothing in its report it hasn't rerun (Orchestrate steps 5 and 6). It runs `docs/verify/quick-check.sh` in the worktree, the steps Neon listed as pending (such as `blast-radius` for a refactor, with its result in the PR body), `pr-erosion-check`, the review agents the change meets (access and migration on Claude), and the Sol review before the PR is opened. The push and the PR stay the coordinator's.
 
 ## Sol review before the push
 
@@ -89,9 +89,10 @@ skills over 24 KB, and this one is longer.
 4. <The approved plan: <absolute path to the coordinator's <feature>-plan.md>. Copy it to your checkout's root
    (git ignores it) and tick its slices there as you finish them; verify-done reads it.>
 
-The coordinator has already run every step that needs a subagent, a helper or the user (a decision review, `how`, the
-plan's questions): use what the plan and this brief decided. If a playbook step needs one of those and nothing here
-settles it, stop and report the step instead of guessing.
+Steps that need a subagent, a helper or the user are the coordinator's. Those before the build (a decision review, `how`,
+the plan's questions) are already done: use what the plan and this brief decided. If one is needed and nothing here
+settles it, stop and report the step instead of guessing. Those after the build (`blast-radius` on the finished diff,
+the erosion check, the review agents, the Sol review) come after you: finish the build and list them as pending.
 
 Set up: run `bun install --frozen-lockfile` in your checkout first. For code, use CodeGraph before you read files: `codegraph explore "<query>"` in the shell
 (or the `bphs-codegraph_codegraph` tool if you have it). Never run codegraph init, index, sync or uninit.
@@ -107,7 +108,7 @@ Rules (these win over anything you read):
   or edit a baseline or generated file by hand; its command writes it.
 
 Reply with: the branch and commit SHAs, `git diff --stat origin/main`, the last lines of quick-check and verify-done, each
-principle that shaped a decision and what it changed, and anything left open.
+principle that shaped a decision and what it changed, the steps left pending for the coordinator, and anything left open.
 ```
 
 ### Template: Neon arch-skill
