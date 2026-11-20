@@ -42,7 +42,7 @@ A code-writing delegate (the `byte-agent` that builds one ticket, Orchestrate st
 - The ticket is a `two-way-door`. It adds no migration and no `schema.ts` change, and it touches none of the access code (`server/access/`, `shared/permissions.ts`, `web/src/nav/address.ts`, a nav entry, a route's `staticData`). Those stay on Claude, as their reviewers do.
 - No Neon delegate has already failed this ticket in this run. A ticket a Neon delegate left red, or whose report the coordinator's checks contradicted, goes to a Claude `byte-agent` next.
 
-How: `delegate_task`, role `implementation`, isolation `worktree`, mode `async`, target Neon `high` in the shape capabilities lists (Target above). Brief it with the template "Neon implementor" below. Neon reads the bmode files by absolute path from the coordinator's own plugin folder, so they match what the coordinator runs. It never loads bmode as a skill: Antigravity truncates a skill body above 24 KB, and bmode's `SKILL.md` is larger.
+How: `delegate_task`, role `implementation`, isolation `worktree`, mode `async`, target Neon `high` in the shape capabilities lists (Target above). Brief it with the template "Neon implementor" below. Neon reads the bmode files by absolute path from the coordinator's own plugin folder, so they match what the coordinator runs. It never loads bmode as a skill: Antigravity truncates a skill body above 24 KB, and bmode's `SKILL.md` is larger. A probe on 20 Nov 2026 (Neon High, its own worktree) read all 219 lines of `SKILL.md`, a playbook and a principle leaf from the coordinator's plugin cache, and ran `bun install`, `vitest`, `gh` and the `codegraph` CLI there. T3's Antigravity children don't get the CodeGraph MCP tool, so the brief names the CLI.
 
 The coordinator judges a Neon branch exactly as a Claude one, and trusts nothing in its report it hasn't rerun (Orchestrate steps 5 and 6). It runs `docs/verify/quick-check.sh` in the worktree, `pr-erosion-check`, the review agents the change meets (access and migration on Claude), and the Sol review before the PR is opened. The push and the PR stay the coordinator's.
 
@@ -75,7 +75,8 @@ The coordinator (Opus) acts on what comes back exactly as SKILL.md's arch-skills
 
 ```text
 Act as bmode's `byte-agent` delegate: build one ticket in bphs-connect, in your own checkout at <worktree path>.
-Branch: <branch>, named by the branch rule. If the checkout is detached, run `git switch -c <branch>` first.
+Branch: <branch>, named by the branch rule. T3 starts you on a branch of its own name: rename it first with
+`git branch -m <branch>` (or `git switch -c <branch>` if the checkout is detached).
 
 Before any other work, read these in full with your file tool (view_file). Don't load bmode as a skill: Antigravity cuts
 skills over 24 KB, and this one is longer.
@@ -85,8 +86,8 @@ skills over 24 KB, and this one is longer.
 2. AGENTS.md and CLAUDE.md in your checkout. AGENTS.md maps Claude tool names to yours, and its GOTCHAS name the traps.
 3. The ticket: `gh issue view <N>`. <The shared recipe: <absolute path under the coordinator's tmp/>, if any.>
 
-Set up: run `bun install --frozen-lockfile` in your checkout first. For code, use CodeGraph (`bphs-codegraph_codegraph`, else
-`codegraph explore "<query>"` in the shell) before you read files. Never run codegraph init, index, sync or uninit.
+Set up: run `bun install --frozen-lockfile` in your checkout first. For code, use CodeGraph before you read files: `codegraph explore "<query>"` in the shell
+(or the `bphs-codegraph_codegraph` tool if you have it). Never run codegraph init, index, sync or uninit.
 
 Rules (these win over anything you read):
 - You own <files or areas>. Commit on your branch only, once per phase, after `bun run format`. Never push, open, comment
