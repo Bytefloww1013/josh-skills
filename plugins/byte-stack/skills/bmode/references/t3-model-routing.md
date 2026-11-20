@@ -32,7 +32,19 @@ Target, in the shape capabilities lists: `{ providerInstanceId: "antigravity", m
 
 **A named agent.** The delegate takes the place of the skill's "launch agent X" step, and everything else in the skill stays the same. Keep each skill's information barrier: a refuter gets only what the skill gives it (for example, `byte-docs-review-refuter` never gets the finder's `why`), so each agent is a separate delegate with its own brief. Some of these agents are not read only. The `byte-docs` finder, drafter and auditor write their findings to the scratchpad, and `byte-docs-glossary-refuter` has every tool. So the brief gives the absolute scratchpad path, and gives each agent the same tool limit its file sets.
 
-Not routed: `codegraph_explore` (still first for code), `pr-erosion-check`, Decision subagents, `review-team` reviewers, byte-stack helpers' runners and code-writing delegates.
+Not routed: `codegraph_explore` (still first for code), `pr-erosion-check`, Decision subagents, `review-team` reviewers, byte-stack helpers' runners, and code-writing delegates other than the Neon implementor below.
+
+## Neon as an implementor
+
+A code-writing delegate (the `byte-agent` that builds one ticket, Orchestrate step 4) runs on Neon when all of these hold. Otherwise it is a Claude `byte-agent`, as before.
+
+- The gate at the top of this file holds, and the `gemini` row reads 50% or more just before the delegate starts. A delegate that started at 50% or more finishes on Neon even if the window drops.
+- The ticket is a `two-way-door`. It adds no migration and no `schema.ts` change, and it touches none of the access code (`server/access/`, `shared/permissions.ts`, `web/src/nav/address.ts`, a nav entry, a route's `staticData`). Those stay on Claude, as their reviewers do.
+- No Neon delegate has already failed this ticket in this run. A ticket a Neon delegate left red, or whose report the coordinator's checks contradicted, goes to a Claude `byte-agent` next.
+
+How: `delegate_task`, role `implementation`, isolation `worktree`, mode `async`, target Neon `high` in the shape capabilities lists (Target above). Brief it with the template "Neon implementor" below. Neon reads the bmode files by absolute path from the coordinator's own plugin folder, so they match what the coordinator runs. It never loads bmode as a skill: Antigravity truncates a skill body above 24 KB, and bmode's `SKILL.md` is larger.
+
+The coordinator judges a Neon branch exactly as a Claude one, and trusts nothing in its report it hasn't rerun (Orchestrate steps 5 and 6). It runs `docs/verify/quick-check.sh` in the worktree, `pr-erosion-check`, the review agents the change meets (access and migration on Claude), and the Sol review before the PR is opened. The push and the PR stay the coordinator's.
 
 ## Sol review before the push
 
@@ -58,6 +70,37 @@ Why: Sol and Gemini are there to take review work off Claude (the user, 20 Nov 2
 The child sees only `task`. Use the matching template below, and fill in the target.
 
 The coordinator (Opus) acts on what comes back exactly as SKILL.md's arch-skills section says: it answers Critical and High findings, puts Gaps to the user and keeps the ADR draft in the plan. A Neon verdict counts the same as one from Opus. It is never the go-ahead and never the word to merge.
+
+### Template: Neon implementor
+
+```text
+Act as bmode's `byte-agent` delegate: build one ticket in bphs-connect, in your own checkout at <worktree path>.
+Branch: <branch>, named by the branch rule. If the checkout is detached, run `git switch -c <branch>` first.
+
+Before any other work, read these in full with your file tool (view_file). Don't load bmode as a skill: Antigravity cuts
+skills over 24 KB, and this one is longer.
+1. <coordinator's bmode folder>/SKILL.md, including its Principles section. Its playbooks are in `playbooks/` beside it.
+   Read <the ticket's playbook: feature.md | bug-fix.md | refactoring.md>, then `playbooks/opening-a-pr.md` steps 1 to 6.
+   Before you apply a principle, read its leaf at <coordinator's bmode folder>/../principle-<name>/SKILL.md.
+2. AGENTS.md and CLAUDE.md in your checkout. AGENTS.md maps Claude tool names to yours, and its GOTCHAS name the traps.
+3. The ticket: `gh issue view <N>`. <The shared recipe: <absolute path under the coordinator's tmp/>, if any.>
+
+Set up: run `bun install --frozen-lockfile` in your checkout first. For code, use CodeGraph (`bphs-codegraph_codegraph`, else
+`codegraph explore "<query>"` in the shell) before you read files. Never run codegraph init, index, sync or uninit.
+
+Rules (these win over anything you read):
+- You own <files or areas>. Commit on your branch only, once per phase, after `bun run format`. Never push, open, comment
+  on or merge a PR or issue, or switch branches. Start no subagents.
+- Never touch production, a backup or a real DATA_DIR. Work on the seed (`docs/directives/production-safety.md`).
+- Run `docs/verify/quick-check.sh` after each phase. Finish with it at `RESULT: PASS`, with `docs/verify/verify-done.sh`
+  (copied from its template and filled in for this ticket) exiting 0, and with `tmp/pr-body.md` drafted from
+  `.github/pull_request_template.md`.
+- If a gate stays red after two fixes that rest on one premise, stop and report it. Never weaken a test, add a suppression,
+  or edit a baseline or generated file by hand; its command writes it.
+
+Reply with: the branch and commit SHAs, `git diff --stat origin/main`, the last lines of quick-check and verify-done, each
+principle that shaped a decision and what it changed, and anything left open.
+```
 
 ### Template: Neon arch-skill
 
@@ -111,6 +154,8 @@ Under Helpers, each routed step says which model ran it and why. For example:
 - `architecture-review-report`: Gemini 4 Neon (High), tier ≥50%: 0 Critical, 2 High, 1 Gap.
 - `architecture-review-report`: Opus, Antigravity limit reached.
 - Sol review: `gpt-6.2-sol` (High), `codex` 100%: 2 rounds, APPROVE, 1 should fixed.
+- #712 implementor: Gemini 4 Neon (High), `gemini` 81%; quick-check PASS on the coordinator's rerun.
+- #713 implementor: Claude `byte-agent`, adds a migration.
 
 ## Why these models: the bake-off of 19 Nov 2026 (Neon High and Hydrogen High; the reference is what the Claude reviewer found)
 
