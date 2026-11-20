@@ -39,8 +39,8 @@ Not routed: `codegraph_explore` (still first for code), `pr-erosion-check`, Deci
 A code-writing delegate (the `byte-agent` that builds one ticket, Orchestrate step 4) runs on Neon when all of these hold. Otherwise it is a Claude `byte-agent`, as before.
 
 - The gate at the top of this file holds, and the `gemini` row reads 50% or more just before the delegate starts. A delegate that started at 50% or more finishes on Neon even if the window drops.
-- The ticket is a `two-way-door`. It adds no migration and no `schema.ts` change, and it touches none of the access code (`server/access/`, `shared/permissions.ts`, `web/src/nav/address.ts`, a nav entry, a route's `staticData`). Those stay on Claude, as their reviewers do.
-- No Neon delegate has already failed this ticket in this run. A ticket a Neon delegate left red, or whose report the coordinator's checks contradicted, goes to a Claude `byte-agent` next.
+- The ticket is a `two-way-door`. It adds no migration and no `schema.ts` change, and it changes nothing about who may read or do what: no access code (`server/access/`, `shared/permissions.ts`, `web/src/nav/address.ts`, a nav entry, a route's `staticData`), no route's access declaration (`requires(...)`, `open()`), and no module's own permission check (such as `requireFormRead`). Those stay on Claude, as their reviewers do. If a Neon branch's diff changes any of them anyway, the coordinator treats it as a failed run (next bullet).
+- No Neon delegate has already failed this ticket in this run. A ticket a Neon delegate left red, or whose report the coordinator's checks contradicted, goes to a Claude `byte-agent` next. Before that delegate starts, free the ticket's branch name and keep Neon's work for the report: in Neon's worktree, `git branch -m <branch> <branch>-neon`. Remove that worktree and branch once the Claude branch is merged (Worktree cleanup).
 
 How: `delegate_task`, role `implementation`, isolation `worktree`, mode `async`, target Neon `high` in the shape capabilities lists (Target above). Brief it with the template "Neon implementor" below. Neon reads the bmode files by absolute path from the coordinator's own plugin folder, so they match what the coordinator runs. It never loads bmode as a skill: Antigravity truncates a skill body above 24 KB, and bmode's `SKILL.md` is larger. A probe on 20 Nov 2026 (Neon High, its own worktree) read all 219 lines of `SKILL.md`, a playbook and a principle leaf from the coordinator's plugin cache, and ran `bun install`, `vitest`, `gh` and the `codegraph` CLI there. T3's Antigravity children don't get the CodeGraph MCP tool, so the brief names the CLI.
 
@@ -75,8 +75,9 @@ The coordinator (Opus) acts on what comes back exactly as SKILL.md's arch-skills
 
 ```text
 Act as bmode's `byte-agent` delegate: build one ticket in bphs-connect, in your own checkout at <worktree path>.
-Branch: <branch>, named by the branch rule. T3 starts you on a branch of its own name: rename it first with
-`git branch -m <branch>` (or `git switch -c <branch>` if the checkout is detached).
+Branch: <branch>, named by the branch rule. T3 starts you on a branch of its own name and base. Before any other
+command, start your branch from main: `git fetch origin && git switch -c <branch> origin/main`, then delete T3's
+branch with `git branch -D <the branch T3 started you on>`.
 
 Before any other work, read these in full with your file tool (view_file). Don't load bmode as a skill: Antigravity cuts
 skills over 24 KB, and this one is longer.
@@ -85,6 +86,12 @@ skills over 24 KB, and this one is longer.
    Before you apply a principle, read its leaf at <coordinator's bmode folder>/../principle-<name>/SKILL.md.
 2. AGENTS.md and CLAUDE.md in your checkout. AGENTS.md maps Claude tool names to yours, and its GOTCHAS name the traps.
 3. The ticket: `gh issue view <N>`. <The shared recipe: <absolute path under the coordinator's tmp/>, if any.>
+4. <The approved plan: <absolute path to the coordinator's <feature>-plan.md>. Copy it to your checkout's root
+   (git ignores it) and tick its slices there as you finish them; verify-done reads it.>
+
+The coordinator has already run every step that needs a subagent, a helper or the user (a decision review, `how`, the
+plan's questions): use what the plan and this brief decided. If a playbook step needs one of those and nothing here
+settles it, stop and report the step instead of guessing.
 
 Set up: run `bun install --frozen-lockfile` in your checkout first. For code, use CodeGraph before you read files: `codegraph explore "<query>"` in the shell
 (or the `bphs-codegraph_codegraph` tool if you have it). Never run codegraph init, index, sync or uninit.
