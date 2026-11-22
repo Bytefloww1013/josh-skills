@@ -1,6 +1,6 @@
 ---
 name: docs-add
-description: Add a doc to bphs-connect's docs system - a how-to, directive or reference in docs/, or the doc for a skill in .claude/skills/ or a plugin - in the right folder, with its header, after checking the repo doesn't already cover it. Use when a procedure, rule, fact or skill has no doc yet.
+description: Add a doc to bphs-connect's docs system - a how-to, directive or reference in docs/, or the doc for a skill in .claude/skills/ - in the right folder, with its header, after checking the repo doesn't already cover it. Use when a procedure, rule, fact or skill has no doc yet.
 argument-hint: "how-to <topic> | directive <topic> | reference <topic> | skill <name> [--repo <owner/name>] [--install \"<command>\"]"
 disable-model-invocation: false
 ---
@@ -23,7 +23,7 @@ The arguments, with examples, are in `docs/skills/byte-stack.md`. How every doc 
 | `how-to <topic>` | `docs/how-to/` | numbered steps, each with what success looks like, and `## Guidance` |
 | `directive <topic>` | `docs/directives/` | `## Rules`, each ending in `[enforced: <path>]` or `[judgment]`, and `## Guidance` |
 | `reference <topic>` | `docs/references/` | facts and one-way-door decisions, each backed by a file and a symbol |
-| `skill <name>` | `docs/skills/` | the five sections below, for `.claude/skills/<name>/` or a plugin `.claude/settings.json` turns on |
+| `skill <name>` | `docs/skills/` | the five sections below, for `.claude/skills/<name>/` |
 
 `--repo <owner/name>` and `--install "<command>"` go with `skill` only. Anything else: stop and show the argument hint.
 
