@@ -78,7 +78,7 @@ Read the leaf in full for any principle you apply (Non-negotiables). Each leaf i
 
 **Delegation**
 
-- **Guard the Context Window.** A bulk read is coming, such as a long log, a HAR or trace, a transcript, a wide diff or a fan-out plan. For code, call `codegraph_explore` first. Hand other bulk to a subagent and keep only its reduced finding in the main thread. The handoff guard ignores subagents, so cap each one's files and turns in its brief. Under T3, that subagent is Gemini 4 Hydrogen when Antigravity offers it (`references/t3-model-routing.md`). On HANDOFF REQUIRED, the handoff comes first.
+- **Guard the Context Window.** A bulk read is coming, such as a long log, a HAR or trace, a transcript, a wide diff or a fan-out plan. For code, call `codegraph_explore` first. Hand other bulk to a subagent and keep only its reduced finding in the main thread. The handoff guard ignores subagents, so cap each one's files and turns in its brief (the scout brief's `READ_CAP`). Its model is the policy's scout (Subagents). On HANDOFF REQUIRED, the handoff comes first.
 - **Never Block on the Human.** About to ask "should I do X?" about reversible work on the issue's branch that no gate covers (after the go-ahead, when the work has a plan), such as a choice inside the plan, the order of slices, a fix for a failing check, or a line for the issue notes. Decide, do it, and report why (Autonomy, "Decide and report"). It covers nothing else. Every gate in Autonomy, the plan's question rounds, and the gates of user-invoked and vendored skills stay with the user.
 
 **Meta**
@@ -152,11 +152,13 @@ Hand bulk reads to subagents per Guard the Context Window, and split their write
 - **`wayfinder`** (vendored). One fresh subagent per research ticket, which runs the `research` skill and pushes a throwaway `research/<name>` branch with no PR.
 - **`grilling`** (vendored). A fresh sub-agent finds each fact the questions need, so the user is asked only for decisions.
 - **`codebase-design`** (vendored, `DESIGN-IT-TWICE.md`). Three or more sub-agents in parallel, each with a fresh context window.
-- **Agents in `.claude/agents/`.** The review agents `module-boundary-reviewer`, `migration-reviewer` and `access-reviewer` are read only, with the tools Read, Grep, Glob and `codegraph_explore`. Each answers `no findings` with the files it read when no rule is broken. The six `byte-docs-*` agents there are the byte-docs skills' own, launched by those skills by name. Under T3, `module-boundary-reviewer` and the `byte-docs-*` agents run on Gemini, each as its own delegate, and `access-reviewer` and `migration-reviewer` stay on Claude (`references/t3-model-routing.md`).
+- **Agents in `.claude/agents/`.** The review agents `module-boundary-reviewer`, `migration-reviewer` and `access-reviewer` are read only, with the tools Read, Grep, Glob and `codegraph_explore`. Each answers `no findings` with the files it read when no rule is broken. The six `byte-docs-*` agents there are the byte-docs skills' own, launched by those skills by name. Under T3, the three review agents run on the policy's reviewer model and the `byte-docs-*` agents on Gemini, each as its own delegate (`references/t3-model-routing.md`).
 - **`pr-erosion-check`** (arch-skills). For a large PR, or a Critical or High finding that rests on judgment, one fresh subagent given only the restated claim, the hunk and the principle; the finding stays only if it agrees. For a boundary finding, the `module-boundary-reviewer` agent is that check (the skill's profile names it).
 - **byte-stack helpers** (Helpers). Spawn each subagent a helper starts as a `byte-agent`, so it reads this file first: an arena candidate or judge, an architect runner, a how explorer or explainer, a swarm worker. No `arena runners`, `arena cross-judge pool`, `architect runners`, `how explorer` or `how explainer` line is set here, so each helper's default model applies. A model id such as `claude-opus-5-5-xhigh` is the Agent tool's `model: "opus"` with `effort: "xhigh"`.
 
-Not established in bphs-connect: a default subagent type or a model per role outside the skills and helpers above and the T3 routing in `references/t3-model-routing.md`, a background or foreground default, or a repo-wide rule on reusing a subagent.
+- **Scouts, reviewers and implementors.** bphs-connect's `docs/agents/sub-agent-choice.md` is the policy for which model runs each role, tried in order, and `references/t3-model-routing.md` applies it under T3. Fill every brief for these roles with `references/briefs/fill-brief.py`, check each report with `references/briefs/check-report.py`, and route between them by `references/dispatch-loop.md`.
+
+Not established in bphs-connect: a default subagent type, a background or foreground default, or a repo-wide rule on reusing a subagent.
 
 ## Writing the reply
 

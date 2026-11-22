@@ -1,50 +1,57 @@
 # Model routing under T3
 
-Applies only when all three hold: the run is inside T3 Code (the `mcp__t3-code__*` tools exist), the coordinator is the main thread (T3 children start no subagents), and `orchestrator_capabilities` (called once per thread) lists provider `antigravity` with `canRunChildTask: true` and the model the table names. T3 lists a model in one of two shapes, and either counts: one id per level (`gemini-4-neon-high`), or the base id (`gemini-4-neon`) with a `thought_level` option. Otherwise run every step as SKILL.md says, on Opus, and say so under Helpers. The Sol review below has its own gate.
+Applies when the run is inside T3 Code (the `mcp__t3-code__*` tools exist) and the coordinator is the main thread (T3 children start no subagents). Call `orchestrator_capabilities` once per thread; a model it doesn't list counts as unavailable. Outside T3, every delegate is a Claude `byte-agent` on Opus, as SKILL.md says, and the reply says so under Helpers.
 
-## Antigravity tier
+## Which model: the policy
 
-Before each routed step, run `python3 -I <byte-stack>/skills/council-review/scripts/provider-usage.py` (the folder next to bmode's), the script that `council-review` ships. Its `gemini` row is the Antigravity 5-hour window, read the way T3 Code reads it. Its `codex` row is the GPT window. It never prints a token. If the `gemini` row reads `unknown`, ask the user once for the level and keep the answer for the run (the API is internal and may change).
+bphs-connect's `docs/agents/sub-agent-choice.md` is the policy for the three delegate roles. It lists the models for each role in order, with a level for each, and says when a job is critical. Read it at the root of the coordinator's checkout before the first dispatch of a run. This file adds only how to apply it under T3. Where the two disagree, the policy wins, and this file is fixed to match.
 
-| `gemini-5h` remaining | Neon model             |
-| --------------------- | ---------------------- |
-| 50% or more           | Neon, `high`           |
-| 1% to 49%             | Neon, `medium`         |
-| 0% (limit gone)       | none: Opus, as before  |
+| Role in the policy | What it covers here | Brief |
+| --- | --- | --- |
+| Scout | The bulk reads Guard the Context Window hands to a subagent (a log, HAR, trace, transcript, wide diff), an investigation's search after CodeGraph, a trace-forensics parse, a question the dispatch loop sends | `briefs/scout.md` |
+| Reviewer | The reviewer brief in the dispatch loop, and the review agents `access-reviewer`, `migration-reviewer` and `module-boundary-reviewer` | `briefs/reviewer.md`; a review agent takes the named-agent template below |
+| Implementor | The code-writing delegate that builds one ticket (Orchestrate step 4) | `briefs/implementor.md` |
 
-Hydrogen draws on the same `gemini-5h` bucket. At 0%, scout work goes back to Claude subagents too.
+A job is critical when its issue is labelled `one-way-door` or the job is important, and non-critical when its issue is labelled `two-way-door`. With no issue, the coordinator judges, and treats a migration, an access change or a data change as important.
 
-A Neon or Hydrogen delegate that fails because the usage limit has been reached sets the tier to "gone" for the rest of the run. Rerun that step on Opus and say so in one line. The error text is not yet verified. Any other failure is reported to the user, and the coordinator does not switch models on its own (T3 rule).
+The policy doesn't cover these, so they route as follows:
 
-## Routed steps
+| Step | Model | How |
+| --- | --- | --- |
+| `arch-skills:architecture-decision-review`, `architecture-review-report`, `repo-navigability-audit` | Gemini 4 Neon, by the Gemini tier below | `delegate_task`, role `review`, isolation `shared`, mode `async`, the arch-skill template below |
+| The `byte-docs` finder, drafter and auditor | Gemini 4 Hydrogen, `high` | `delegate_task`, role `review`, isolation `shared`, mode `async`, the named-agent template below |
+| The `byte-docs` refuters | Gemini 4 Neon, by the Gemini tier | same |
+| The Sol review before the push | Sol, as its section below says | `byte-stack:sol-loop` |
 
-| Step                                                         | Model                    | How                                                                                       |
-| ------------------------------------------------------------ | ------------------------ | ----------------------------------------------------------------------------------------- |
-| `arch-skills:architecture-decision-review`                   | Neon, by tier            | `delegate_task`, role `review`, isolation `shared`, mode `async`                          |
-| `arch-skills:architecture-review-report`                     | Neon, by tier            | same                                                                                      |
-| `arch-skills:repo-navigability-audit`                        | Neon, by tier            | same                                                                                      |
-| Scout work: the bulk reads Guard the Context Window hands to a subagent (a log, HAR, trace, transcript, wide diff), an investigation's search after CodeGraph, a trace-forensics parse | Hydrogen, `high` | `delegate_task`, role `research`, isolation `shared`, mode `async` |
-| `module-boundary-reviewer`; the `byte-docs` finder, drafter and auditor | Hydrogen, `high` | `delegate_task`, role `review`, isolation `shared`, mode `async`; the brief points the child at the agent's file (template below). The coordinator sets the severity itself. The agent's format has no severity scale, and in the bake-off the two Gemini models rated the same finding differently (High, and "Severity 1"). |
-| The `byte-docs` refuters | Neon, by tier | same |
-| `access-reviewer`, `migration-reviewer` | **Claude, as now** | In the bake-off on #668, Neon found 1 of the 2 access gaps Claude found and Hydrogen found neither. A missed access or migration problem is silent, and it is costly. |
+Not routed: `codegraph_explore` (still first for code), `pr-erosion-check`, Decision subagents, `review-team` reviewers and byte-stack helpers' runners.
 
-Target, in the shape capabilities lists: `{ providerInstanceId: "antigravity", model: "gemini-4-neon-high" }` with no options, or `{ providerInstanceId: "antigravity", model: "gemini-4-neon", options: { thought_level: "high" } }`. The same holds for Hydrogen. T3 switched from the first shape to the second on 20 Nov 2026, and a table that named only the first sent every step to Opus. Follow each delegate's `next`, and don't poll it.
+## Usage left
 
-**A named agent.** The delegate takes the place of the skill's "launch agent X" step, and everything else in the skill stays the same. Keep each skill's information barrier: a refuter gets only what the skill gives it (for example, `byte-docs-review-refuter` never gets the finder's `why`), so each agent is a separate delegate with its own brief. Some of these agents are not read only. The `byte-docs` finder, drafter and auditor write their findings to the scratchpad, and `byte-docs-glossary-refuter` has every tool. So the brief gives the absolute scratchpad path, and gives each agent the same tool limit its file sets.
+The policy runs the first model that is available and has usage left. Before each routed step, run `python3 -I <byte-stack>/skills/council-review/scripts/provider-usage.py` (the folder next to bmode's). It never prints a token.
 
-Not routed: `codegraph_explore` (still first for code), `pr-erosion-check`, Decision subagents, `review-team` reviewers, byte-stack helpers' runners, and code-writing delegates other than the Neon implementor below.
+- **Gemini** (Neon, Hydrogen): its `gemini` row is the Antigravity 5-hour window. At 50% or more, Neon runs at the higher level the policy gives; from 1% to 49%, at the lower one (`medium` where the policy gives "high or medium"). At 0%, skip Neon and Hydrogen. If the row reads `unknown`, ask the user once for the level and keep the answer for the run.
+- **Sol**: its `codex` row. The Sol review section below gives the levels.
+- **OpenCode** (DeepSeek V4.1 Flash 1017, Tencent Hy4): runs through the homelab T3 server's `opencode` provider. No reader exists for its usage, so count it as available while `orchestrator_capabilities` lists the model.
+- **Claude** (Opus, Haiku): no reader exists either. Where the policy depends on Claude's usage (Opus as a non-critical implementor), ask the user once how much of Claude's 5-hour and weekly usage is left, and keep the answer for the run.
 
-## Neon as an implementor
+Where the policy gives two levels, pick by how hard the task is and the usage left.
 
-A code-writing delegate (the `byte-agent` that builds one ticket, Orchestrate step 4) runs on Neon when all of these hold. Otherwise it is a Claude `byte-agent`, as before.
+A delegate that fails because a usage limit has been reached marks that provider gone for the rest of the run: rerun the step on the next model in the policy's list and say so in one line. The error text is not yet verified. Any other failure is reported to the user, and the coordinator does not switch models on its own (T3 rule).
 
-- The gate at the top of this file holds, and the `gemini` row reads 50% or more just before the delegate starts. A delegate that started at 50% or more finishes on Neon even if the window drops.
-- The ticket is a `two-way-door`. It adds no migration and no `schema.ts` change, and it changes nothing about who may read or do what: no access code (`server/access/`, `shared/permissions.ts`, `web/src/nav/address.ts`, a nav entry, a route's `staticData`), no route's access declaration (`requires(...)`, `open()`), and no module's own permission check (such as `requireFormRead`). Those stay on Claude, as their reviewers do. If a Neon branch's diff changes any of them anyway, the coordinator treats it as a failed run (next bullet).
-- No Neon delegate has already failed this ticket in this run. A ticket a Neon delegate left red, or whose report the coordinator's checks contradicted, goes to a Claude `byte-agent` next. Before that delegate starts, free the ticket's branch name and keep Neon's work for the report: in Neon's worktree, `git branch -m <branch> <branch>-neon`. Keep that worktree and branch, which may hold commits nothing else has, until the user says to discard them. On that word, remove them even though the branch was never merged (`git worktree remove <path>`, then `git branch -D <branch>-neon`); Worktree cleanup's stop for uncommitted work still holds, so report a dirty worktree instead of forcing it.
+## Starting a delegate
 
-How: `delegate_task`, role `implementation`, isolation `worktree`, mode `async`, target Neon `high` in the shape capabilities lists (Target above). Brief it with the template "Neon implementor" below. Neon reads the bmode files by absolute path from the coordinator's own plugin folder, so they match what the coordinator runs. It never loads bmode as a skill: Antigravity truncates a skill body above 24 KB, and bmode's `SKILL.md` is larger. A probe on 20 Nov 2026 (Neon High, its own worktree) read all 219 lines of `SKILL.md`, a playbook and a principle leaf from the coordinator's plugin cache, and ran `bun install`, `vitest`, `gh` and the `codegraph` CLI there. T3's Antigravity children don't get the CodeGraph MCP tool, so the brief names the CLI.
+Fill the brief with `briefs/fill-brief.py` (the dispatch loop says how) and pass the printed brief as the whole `task`.
 
-The coordinator judges a Neon branch exactly as a Claude one, and trusts nothing in its report it hasn't rerun (Orchestrate steps 5 and 6). It runs `docs/verify/quick-check.sh` in the worktree, the steps Neon listed as pending (such as `blast-radius` for a refactor, with its result in the PR body), `pr-erosion-check`, the review agents the change meets (access and migration on Claude), and the Sol review before the PR is opened. The push and the PR stay the coordinator's.
+- **Claude models** run on the Agent tool, as T3 asks for a child on the coordinator's own provider: a `byte-agent` with `model` and `effort` from the policy (`claude-opus-5-5` at `high` is `model: "opus"`, `effort: "high"`), `run_in_background: false`, and `isolation: "worktree"` for an implementor. `--provider claude` in the filler.
+- **Other models** run through `delegate_task`, with the target in the shape `orchestrator_capabilities` lists, from the model-id table in the policy: `{ providerInstanceId: "antigravity", model: "gemini-4-neon", options: { thought_level: "high" } }`, or a per-level id (`gemini-4-neon-high`) with no options where capabilities lists one. T3 switched from the second shape to the first on 20 Nov 2026, and a table that named only one shape sent every step to Opus. A scout takes role `research`, isolation `shared`; a reviewer role `review`, isolation `shared`; an implementor role `implementation`, isolation `worktree`; all mode `async`. Follow each delegate's `next`, and don't poll it. `--provider antigravity`, `opencode` or `codex` in the filler.
+
+CodeGraph: T3's Antigravity children don't get the CodeGraph MCP tool, so the filler gives every non-Claude delegate the `codegraph explore` CLI. A probe on 20 Nov 2026 (Neon High, its own worktree) read all of bmode's `SKILL.md`, a playbook and a principle leaf from the coordinator's plugin cache by absolute path, and ran `bun install`, `vitest`, `gh` and the `codegraph` CLI there. OpenCode and Codex children have not been probed.
+
+## When an implementor fails
+
+The coordinator judges every implementor's branch the same way, and trusts nothing in its report it hasn't rerun (Orchestrate steps 5 and 6): `docs/verify/quick-check.sh` in the worktree, the steps the report lists as pending (such as `blast-radius` for a refactor, with its result in the PR body), `pr-erosion-check`, the review agents the change meets, and the Sol review before the PR is opened. The push and the PR stay the coordinator's.
+
+A branch an implementor left red, or whose report the coordinator's checks contradicted, counts as a failed run: the next model in the policy's list builds the ticket, and no model that failed the ticket gets it again in this run. Before that delegate starts, free the ticket's branch name and keep the failed work for the report: in the failed worktree, `git branch -m <branch> <branch>-<model>`. Keep that worktree and branch, which may hold commits nothing else has, until the user says to discard them. On that word, remove them even though the branch was never merged (`git worktree remove <path>`, then `git branch -D <branch>-<model>`); Worktree cleanup's stop for uncommitted work still holds, so report a dirty worktree instead of forcing it.
 
 ## Sol review before the push
 
@@ -67,51 +74,11 @@ Why: Sol and Gemini are there to take review work off Claude (the user, 20 Nov 2
 
 ## The brief
 
-The child sees only `task`. Use the matching template below, and fill in the target.
+The child sees only `task`. A scout, reviewer or implementor gets its brief from `briefs/fill-brief.py`. A review agent or a `byte-docs` agent on a non-Claude model gets the named-agent template, and an arch-skill run the arch-skill template, each filled in by hand.
 
-The coordinator (Opus) acts on what comes back exactly as SKILL.md's arch-skills section says: it answers Critical and High findings, puts Gaps to the user and keeps the ADR draft in the plan. A Neon verdict counts the same as one from Opus. It is never the go-ahead and never the word to merge.
+The coordinator acts on what comes back exactly as SKILL.md's arch-skills section says: it answers Critical and High findings, puts Gaps to the user and keeps the ADR draft in the plan. A verdict from any model counts the same as one from Opus. It is never the go-ahead and never the word to merge.
 
-### Template: Neon implementor
-
-```text
-Act as bmode's `byte-agent` delegate: build one ticket in bphs-connect, in your own checkout at <worktree path>.
-Branch: <branch>, named by the branch rule. T3 starts you on a branch of its own name and base. Before any other
-command, start your branch from main: `git fetch origin && git switch -c <branch> origin/main`, then delete T3's
-branch with `git branch -D <the branch T3 started you on>`.
-
-Before any other work, read these in full with your file tool (view_file). Don't load bmode as a skill: Antigravity cuts
-skills over 24 KB, and this one is longer.
-1. <coordinator's bmode folder>/SKILL.md, including its Principles section. Its playbooks are in `playbooks/` beside it.
-   Read <the ticket's playbook: feature.md | bug-fix.md | refactoring.md>, then `playbooks/opening-a-pr.md` steps 1 to 6.
-   Before you apply a principle, read its leaf at <coordinator's bmode folder>/../principle-<name>/SKILL.md.
-2. AGENTS.md and CLAUDE.md in your checkout. AGENTS.md maps Claude tool names to yours, and its GOTCHAS name the traps.
-3. The ticket: `gh issue view <N>`. <The shared recipe: <absolute path under the coordinator's tmp/>, if any.>
-4. <The approved plan: <absolute path to the coordinator's <feature>-plan.md>. Copy it to your checkout's root
-   (git ignores it) and tick its slices there as you finish them; verify-done reads it.>
-
-Steps that need a subagent, a helper or the user are the coordinator's. Those before the build (a decision review, `how`,
-the plan's questions) are already done: use what the plan and this brief decided. If one is needed and nothing here
-settles it, stop and report the step instead of guessing. Those after the build (`blast-radius` on the finished diff,
-the erosion check, the review agents, the Sol review) come after you: finish the build and list them as pending.
-
-Set up: run `bun install --frozen-lockfile` in your checkout first. For code, use CodeGraph before you read files: `codegraph explore "<query>"` in the shell
-(or the `bphs-codegraph_codegraph` tool if you have it). Never run codegraph init, index, sync or uninit.
-
-Rules (these win over anything you read):
-- You own <files or areas>. Commit on your branch only, once per phase, after `bun run format`. Never push, open, comment
-  on or merge a PR or issue, or switch branches. Start no subagents.
-- Never touch production, a backup or a real DATA_DIR. Work on the seed (`docs/directives/production-safety.md`).
-- Run `docs/verify/quick-check.sh` after each phase. Finish with it at `RESULT: PASS`, with `docs/verify/verify-done.sh`
-  (copied from its template and filled in for this ticket) exiting 0, and with `tmp/pr-body.md` drafted from
-  `.github/pull_request_template.md`.
-- If a gate stays red after two fixes that rest on one premise, stop and report it. Never weaken a test, add a suppression,
-  or edit a baseline or generated file by hand; its command writes it.
-
-Reply with: the branch and commit SHAs, `git diff --stat origin/main`, the last lines of quick-check and verify-done, each
-principle that shaped a decision and what it changed, the steps left pending for the coordinator, and anything left open.
-```
-
-### Template: Neon arch-skill
+### Template: arch-skill
 
 ```text
 You are running the arch-skills skill `<name>` in the bphs-connect checkout at <path>. Run it
@@ -133,38 +100,31 @@ Reply with: the report path, the verdict or counts (Critical/High/Medium/Low, Ga
 Critical and High finding in one line with its quote.
 ```
 
-### Template: Hydrogen scout
-
-```text
-Read-only scout in <path>. Question: <one question>. Read: <files/logs/diff range>; cap
-<N> files. For code use CodeGraph (`bphs-codegraph_codegraph`) first. Write nothing, run no
-command that changes state, and start no subagents. Reply in at most <M> lines: the answer, then
-each fact with file:line or a quote. Give each claim its source, and say "not found" rather than guess.
-```
-
-### Template: a named agent on Hydrogen
+### Template: a named agent
 
 ```text
 Act as the `<agent>` agent. Read .claude/agents/<agent>.md in <path> in full. Its body is your
-instructions, and its `tools:` line is your limit: use only the Antigravity equivalents of those
-tools (AGENTS.md maps them). <If the agent has no Write tool:> Change no file. <If it writes:>
+instructions, and its `tools:` line is your limit: use only your own equivalents of those
+tools (AGENTS.md maps them for Antigravity). For code, run `codegraph explore "<query>"` first. <If the agent has no Write tool:> Change no file. <If it writes:>
 Write only under <absolute scratchpad path>. Start no subagents.
 <Exactly the input the skill gives this agent, and nothing more: base, diff, files, term,
 findings file…>
 Reply in the format its file asks for.
 ```
 
-A file path beats pasting the definition: the file stays the one source, and the brief stays short. Antigravity doesn't enforce a `tools:` frontmatter, so the brief states the limit.
+A file path beats pasting the definition: the file stays the one source, and the brief stays short. No provider but Claude enforces a `tools:` frontmatter, so the brief states the limit. On Claude, launch the agent by name with the Agent tool instead.
+
+**A named agent.** The delegate takes the place of the skill's "launch agent X" step, and everything else in the skill stays the same. Keep each skill's information barrier: a refuter gets only what the skill gives it (for example, `byte-docs-review-refuter` never gets the finder's `why`), so each agent is a separate delegate with its own brief. Some of these agents are not read only. The `byte-docs` finder, drafter and auditor write their findings to the scratchpad, and `byte-docs-glossary-refuter` has every tool. So the brief gives the absolute scratchpad path, and gives each agent the same tool limit its file sets. A review agent's format has no severity scale, so the coordinator sets each finding's severity itself.
 
 ## Report
 
-Under Helpers, each routed step says which model ran it and why. For example:
+Under Helpers, each routed step says which model ran it, at what level, and why. For example:
 
-- `architecture-review-report`: Gemini 4 Neon (High), tier ≥50%: 0 Critical, 2 High, 1 Gap.
-- `architecture-review-report`: Opus, Antigravity limit reached.
-- Sol review: `gpt-6.2-sol` (High), `codex` 100%: 2 rounds, APPROVE, 1 should fixed.
-- #712 implementor: Gemini 4 Neon (High), `gemini` 81%; quick-check PASS on the coordinator's rerun.
-- #713 implementor: Claude `byte-agent`, adds a migration.
+- Scout for #712: DeepSeek V4.1 Flash 1017 (max), first in the policy.
+- `access-reviewer` on #713, critical: `gpt-6.2-sol` (high), `codex` 81%.
+- #712 implementor, non-critical: Gemini 4 Neon (high), `gemini` 81%; quick-check PASS on the coordinator's rerun.
+- `architecture-review-report`: Gemini 4 Neon (high), tier ≥50%: 0 Critical, 2 High, 1 Gap.
+- Sol review: `gpt-6.2-sol` (high), `codex` 100%: 2 rounds, APPROVE, 1 should fixed.
 
 ## Why these models: the bake-off of 19 Nov 2026 (Neon High and Hydrogen High; the reference is what the Claude reviewer found)
 
@@ -176,3 +136,5 @@ Under Helpers, each routed step says which model ran it and why. For example:
 The four runs used about 26% of the Gemini 5-hour window (85% → 59%), about 6% a review. An eight-auditor glossary audit on Gemini would take about half the window.
 
 The sample is small: two PRs, one agent each. `migration-reviewer`, the `byte-docs` agents and refuters on Neon have not been tested. Gap (2) is confirmed by `45d8817c9e`, which fixed it after `3d80641b72`.
+
+Before the policy file (22 Nov 2026), these results kept `access-reviewer` and `migration-reviewer` on Claude. The policy now puts Sol first for them. Sol hasn't been tested on either agent, so watch the first few runs against a Claude rerun.
