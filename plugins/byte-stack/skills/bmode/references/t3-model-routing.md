@@ -1,6 +1,6 @@
 # Model routing under T3
 
-Applies when the run is inside T3 Code (the `mcp__t3-code__*` tools exist) and the coordinator is the main thread (T3 children start no subagents). Call `orchestrator_capabilities` once per thread. A model counts as available only when it is listed under a provider with `canRunChildTask: true`; capabilities also lists models under disabled providers. Outside T3, every delegate is a Claude `byte-agent` on Opus, as SKILL.md says, and the reply says so under Helpers.
+Applies when the run is inside T3 Code (the `mcp__t3-code__*` tools exist) and the coordinator is the main thread (T3 children start no subagents). Call `orchestrator_capabilities` once per thread. A model counts as available only when it is listed under a provider with `canRunChildTask: true`; capabilities also lists models under disabled providers. Outside T3, every scout, reviewer and implementor is a Claude `byte-agent` on Opus, as SKILL.md says, and the reply says so under Helpers. Named agents (the review agents, the byte-docs agents) still launch by name.
 
 ## Which model: the policy
 
