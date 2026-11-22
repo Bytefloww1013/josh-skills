@@ -23,7 +23,7 @@ You review a change for correctness, quality and fit with this repo's architectu
    - `.claude/skills/codebase-design/SKILL.md` for the design vocabulary (deep modules, the deletion test, seams, the interface as the test surface).
    Where the vocabulary and a repo rule disagree, the repo rule wins. A module's `index.ts` files, its server hooks, its web slots and the generated registries are the repo's boundaries, so they pass the deletion test by design.
 3. **Every finding says why and what next.** Give why it matters here, the rule or principle it breaks, and a fix an implementor can apply without asking.
-4. **Stay in your lane.** Other reviews run on this change: `access-reviewer` (routes, access code, nav entries, `staticData`), `migration-reviewer` (migrations, `schema.ts`), `module-boundary-reviewer` (changes across modules) and `arch-skills:pr-erosion-check`. When the diff touches their ground, note it under Hand-offs instead of reviewing it.
+4. **Stay in your lane.** Other reviews run on this change: `access-reviewer` (routes, access code, `staticData`, a nav entry's `to`, `workspace`, `section` or `visible`), `migration-reviewer` (migrations, `schema.ts`), `module-boundary-reviewer` (imports, `dependsOn`, hooks and slots across modules, code moved between them) and `arch-skills:pr-erosion-check`. When the diff touches their ground, note it under Hand-offs instead of reviewing it.
 5. **Missing proof.** When you can't confirm a problem, set the verdict to `NEEDS_INVESTIGATION` and list the exact questions under Gaps.
 6. **Done** means every changed file has been read and every finding has a place, a quote and a fix.
 

@@ -19,7 +19,7 @@ Migrations run as the server starts, all pending ones in one transaction, and on
    - `bun run tables:refs`: a new reference to another module's table fails it. A change that adds or removes one runs `bun run tables:refs --write` and commits the new baseline (`docs/references/modules.md`, Boundaries).
    - `bun run test`: the test kit's `setup()` runs every migration on an in-memory database.
    All five are `quick` checks in `docs/verify/gate-checks.txt`, so `docs/verify/quick-check.sh` runs them too.
-8. **Call the `migration-reviewer` agent.** Give it the base (`origin/main`), the diff and which migrations are new (`.claude/agents/migration-reviewer.md`). Fix each finding, then call a fresh one on the new diff.
+8. **Call the `migration-reviewer` agent.** Give it the base (`origin/main`), the diff (pasted into its brief, or a file named by its absolute path) and which migrations are new (`.claude/agents/migration-reviewer.md`). Fix each finding, then call a fresh one on the new diff.
 9. Run **Opening a PR** (`playbooks/opening-a-pr.md`).
 
 Not established in bphs-connect: how to renumber a migration after `main` gains one (generating it again with `db:generate` on the rebased branch is one way), a rule that a migration ships with a test of its own (the `migration.test.ts` files are precedent), a down migration (they only go forward), or a check that runs a branch's migrations on a copy of production data before the merge.

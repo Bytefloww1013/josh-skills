@@ -107,8 +107,8 @@ Act as the `<agent>` agent. Read .claude/agents/<agent>.md in <path> in full. It
 instructions, and its `tools:` line is your limit: use only your own equivalents of those
 tools (AGENTS.md maps them for Antigravity). For code, run `codegraph explore "<query>"` first. <If the agent has no Write tool:> Change no file. <If it writes:>
 Write only under <absolute scratchpad path>. Start no subagents.
-<Exactly the input the skill gives this agent, and nothing more: base, diff, files, term,
-findings file…>
+<Exactly the input the skill gives this agent, and nothing more: base, the diff pasted or the
+absolute path of a file holding it, term, findings file…>
 Reply in the format its file asks for.
 ```
 
