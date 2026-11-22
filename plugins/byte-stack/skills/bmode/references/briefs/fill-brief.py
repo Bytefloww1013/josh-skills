@@ -5,7 +5,7 @@ Usage: fill-brief.py <scout|reviewer|implementor> --provider <claude|antigravity
                      --values <file.json> [--set KEY=VALUE ...] [--out <brief.md>]
        fill-brief.py --keys <role>     list what each placeholder of a role takes
 
-Fills BASE_SHA, EXPECTED_HEAD, BMODE_DIR and READ_CAP (and REPO_ROOT for a scout) when not given, inlines
+Fills BASE_SHA, START, EXPECTED_HEAD, CARRY_DIR, BMODE_DIR and READ_CAP (and REPO_ROOT for a scout) when not given, inlines
 shared-rules.md as SHARED_RULES, and writes the CodeGraph line for the provider. Exits 1 on a placeholder left unfilled or a
 value no template uses. Prints the brief, and writes it to --out (default RUN_DIR/brief.md).
 """
@@ -21,7 +21,7 @@ CODEGRAPH = {
 KEYS = {
     "TASK_ID": "short unique id, e.g. issue712-impl-1",
     "RUN_DIR": "absolute path: <coordinator checkout>/tmp/agents/<task>/<run>",
-    "REPO_ROOT": "absolute checkout path: the delegate's worktree (required for implementor and reviewer; default for a scout: the current checkout)",
+    "REPO_ROOT": "absolute checkout path the delegate works in (required for a reviewer; default for a scout: the current checkout)",
     "READ_CAP": "files beyond those the task names (default 40; raise it for a wide diff)",
     "CONSUMER": "who reads the scout report: implementor, reviewer or coordinator",
     "QUESTIONS": "numbered questions, each answerable with a path and lines (JSON list = one per line)",
@@ -33,7 +33,9 @@ KEYS = {
     "ISSUE_NUMBER": "the issue number alone, e.g. 734",
     "BRANCH": "branch named by the branch rule in docs/directives/git-and-prs.md",
     "BASE_SHA": "origin/main SHA the branch starts from (default: git rev-parse origin/main)",
-    "EXPECTED_HEAD": "BASE_SHA for new work; the last head the coordinator checked for a fix pass",
+    "START": "new, or continue for a fix pass or a retry on a branch that exists",
+    "EXPECTED_HEAD": "BASE_SHA for new work; for continue, the branch head the coordinator last checked",
+    "CARRY_DIR": "absolute folder of git-ignored files saved from the last worktree, or 'none'",
     "DOOR": "one-way-door or two-way-door, from the issue's label",
     "PLAN_PATH": "absolute path to the plan, or 'none: the spec below is the plan'",
     "SPEC": "exact changes: paths, symbols, invariants, target behaviour, from scout or reviewer evidence",
@@ -74,7 +76,9 @@ def main():
     values.setdefault("CODEGRAPH_LINE", CODEGRAPH["claude" if a.provider == "claude" else "other"])
     if a.role == "implementor":
         values.setdefault("BASE_SHA", git("rev-parse", "origin/main"))
+        values.setdefault("START", "new")
         values.setdefault("EXPECTED_HEAD", values["BASE_SHA"])
+        values.setdefault("CARRY_DIR", "none")
         values.setdefault("BMODE_DIR", str(HERE.parent.parent))
 
     template = (HERE / f"{a.role}.md").read_text()

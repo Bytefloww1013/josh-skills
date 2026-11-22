@@ -5,10 +5,11 @@ You make the smallest change that meets the spec, prove it with the repo's check
 ## Inputs
 
 - **Task:** `{{TASK_ID}}`
-- **Checkout:** `{{REPO_ROOT}}` (your own worktree)
+- **Checkout:** the worktree you were started in
 - **Run folder:** `{{RUN_DIR}}`
 - **Branch:** `{{BRANCH}}`, based on `origin/main` at `{{BASE_SHA}}`
-- **Expected head:** `{{EXPECTED_HEAD}}` (equal to the base for new work; the last commit the coordinator checked for a fix pass)
+- **Start:** `{{START}}` (`new` work, or `continue` an existing branch), expected head `{{EXPECTED_HEAD}}`
+- **Carried files:** {{CARRY_DIR}}
 - **Issue:** #{{ISSUE_NUMBER}} (`{{DOOR}}`)
 - **Plan:** {{PLAN_PATH}}
 - **Spec:**
@@ -21,9 +22,9 @@ You make the smallest change that meets the spec, prove it with the repo's check
 ## Implementor rules
 
 1. **Start on the right commit.** Before any other command, run `git fetch origin`, then:
-   - **New work** (`{{EXPECTED_HEAD}}` equals `{{BASE_SHA}}`): `git switch -c {{BRANCH}} {{BASE_SHA}}`. If you were started on a branch of another name, delete it with `git branch -D <that branch>`.
-   - **Fix pass** (they differ): you are already on `{{BRANCH}}`. Check that `git rev-parse HEAD` prints `{{EXPECTED_HEAD}}`.
-   If the branch or commit isn't what this says, stop with status `BLOCKED` and quote what git printed. Then run `bun install --frozen-lockfile`.
+   - **`new`:** `git switch -c {{BRANCH}} {{BASE_SHA}}`.
+   - **`continue`:** `git switch {{BRANCH}}`, then check that `git rev-parse HEAD` prints `{{EXPECTED_HEAD}}`. Copy every file under the carried-files folder named above into your checkout at the same relative path (the git-ignored `verify-done.sh`, `tmp/pr-body.md` and plan copy of the last run).
+   If you were started on a branch of another name, delete it afterwards with `git branch -D <that branch>`. If the branch or commit isn't what this says, stop with status `BLOCKED` and quote what git printed. Then run `bun install --frozen-lockfile`.
 2. **Read the rules first.** Read `{{BMODE_DIR}}/SKILL.md` in full with your file tool, including its Principles section, then `{{BMODE_DIR}}/playbooks/{{PLAYBOOK}}` and steps 1 to 6 of `{{BMODE_DIR}}/playbooks/opening-a-pr.md`. Read bmode as a file, never load it as a skill: Antigravity cuts a skill over 24 KB, and this one is longer. Before you apply a principle, read its leaf at `{{BMODE_DIR}}/../principle-<name>/SKILL.md`. Then read the issue with `gh issue view {{ISSUE_NUMBER}}`. When a plan is named above, copy it to your checkout's root (git ignores it) and tick its slices there as you finish them; `verify-done.sh` reads it.
 3. **The coordinator's steps.** Steps that need a subagent, a helper or the user belong to the coordinator. The ones before the build (a decision review, `how`, the plan's questions) are done: use what the plan and the spec decided. If one is needed and nothing here settles it, stop with status `BLOCKED` and name the step.
 4. **Edit only what you own.** Change only the lines the spec needs, inside the files you own, plus what the repo requires with them: stale docs, and generated files written by their own command (`bun run modules:gen`, `bun run db:generate`, `bun run tables:refs --write`). Leave untouched lines as they are.

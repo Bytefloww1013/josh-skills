@@ -16,7 +16,7 @@ You review a change for correctness, quality and fit with this repo's architectu
 
 ## Reviewer rules
 
-1. **Read only.** Create, edit, format or delete nothing in the checkout. You may run read-only checks: `bun run typecheck`, `bunx vitest run <path>`, `bun run lint`.
+1. **Read only.** Create, edit, format or delete nothing in the checkout. Read the change through `git diff` and `git show {{HEAD}}:<path>`, which work from any checkout. Run read-only checks (`bun run typecheck`, `bunx vitest run <path>`, `bun run lint`) only when `git rev-parse HEAD` in the checkout prints `{{HEAD}}`; otherwise say under Checks that none ran and why.
 2. **Judge against the whole repo.** A change can work and still wear the system down. Read, in this order of authority:
    - `AGENTS.md` and `docs/directives/`;
    - `docs/references/architecture.md`, `docs/references/modules.md` and the `README.md` of each module the diff touches;
