@@ -72,14 +72,14 @@ evidence. Keep the upheld ones, with the finder's `why`, in `$SCRATCH/posted.jso
 The summary line, filled from the steps above (`n/a` where a number isn't reported, such as tokens when the Agent results give none):
 
 ```text
-byte-docs-review: <docs> docs reviewed, <raised> findings raised, <quote> dropped by the quote check, <refuted> dropped by the refuter, <posted> posted, <tokens> tokens used
+docs-review: <docs> docs reviewed, <raised> findings raised, <quote> dropped by the quote check, <refuted> dropped by the refuter, <posted> posted, <tokens> tokens used
 ```
 
 The post is the summary line, a table of the findings (doc `file:line`, code `file:line`, why, cause), then the hidden marker and the
 findings as JSON, exactly as `scripts/docs/findings.ts` reads them:
 
 ````markdown
-<!-- byte-docs-review:findings -->
+<!-- docs-review:findings -->
 ```json
 { "summary": "<the summary line>", "findings": [ ... ] }
 ```

@@ -7,7 +7,7 @@ Use this reference when the Babysit playbook (`../playbooks/babysit.md`) meets a
 - **Super-linter summary**, from `github-actions[bot]`. The `Super-Linter` job posts it on PRs (`ENABLE_GITHUB_PULL_REQUEST_SUMMARY_COMMENT: true` in `.github/workflows/super-linter.yml`). It starts with `<!-- super-linter-summary-comment -->`. The job is skipped when `ci:scope` finds the change is `text` or `tested`, so a Markdown-only PR gets no summary.
 - **Oxlint annotations**, from the `Typecheck, test, build` job: `bun run lint --format github` turns each finding into an annotation on the PR (`.github/workflows/super-linter.yml`). They are not comments.
 - **Created releases**, a `🤖 Created releases:` comment from `github-actions[bot]` (release-please, `.github/workflows/release.yml`) on a merged release PR. #229 got one for `v1.2.0`.
-- **docs-review findings**, when byte-stack's `docs-review` skill runs as `pr`. The skill posts them with `gh pr comment <n> --body-file`. The post holds a summary line, a findings table, and the marker `<!-- byte-docs-review:findings -->` with the findings as JSON.
+- **docs-review findings**, when byte-stack's `docs-review` skill runs as `pr`. The skill posts them with `gh pr comment <n> --body-file`. The post holds a summary line, a findings table, and the marker `<!-- docs-review:findings -->` (`<!-- byte-docs-review:findings -->` on posts made before the skill moved into byte-stack) with the findings as JSON.
 - **The owner's comments.** The owner seldom comments on a PR.
 
 ## How to handle each
