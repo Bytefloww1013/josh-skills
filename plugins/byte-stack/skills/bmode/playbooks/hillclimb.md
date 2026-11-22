@@ -6,7 +6,7 @@ Not established in bphs-connect: a benchmark harness, profiler, perf tooling, in
 
 Core discipline: one change, one measurement, keep or revert. Never claim a win from reading code.
 
-1. Name the branch before the first commit, by the rule in `docs/directives/git-and-prs.md`: `<descriptor>/<action>-issue<N>-<description>`. Use it in place of any branch name the session hands over (`AGENTS.md`). The directive has no perf descriptor. The repo's `byte-gh-issue` skill files a performance fault as a bug, so use `bug`, which maps to the `fix` type.
+1. Name the branch before the first commit, by the rule in `docs/directives/git-and-prs.md`: `<descriptor>/<action>-issue<N>-<description>`. Use it in place of any branch name the session hands over (`AGENTS.md`). The directive has no perf descriptor. byte-stack's `gen-issue` skill files a performance fault as a bug, so use `bug`, which maps to the `fix` type.
 2. Fix one metric, the direction that counts as better, the target, and a stop rule. Use the user's numbers. Otherwise agree them with the user before the first attempt.
 3. Build the harness as a `diagnosing-bugs` Phase 1 loop: one command, already run, deterministic and fast. Make it deterministic the skill's way: pin time, seed randomness, isolate the filesystem. In this repo:
    - The test kit gives an in-memory SQLite database with the real migrations.
@@ -26,4 +26,4 @@ Core discipline: one change, one measurement, keep or revert. Never claim a win 
 
 **Reply:** the metric and target, baseline to final with the percent delta, attempts run (kept vs reverted), each kept change on one line, the log path, and the best idea you would try next.
 
-Sources: .claude/skills/diagnosing-bugs/SKILL.md, server/testing/index.ts, docs/verify/fixed-clock.mjs, vitest.config.ts, package.json, AGENTS.md, .gitignore, docs/directives/git-and-prs.md, docs/verify/quick-check.sh, .claude/skills/byte-gh-issue/SKILL.md, .github/pull_request_template.md
+Sources: .claude/skills/diagnosing-bugs/SKILL.md, server/testing/index.ts, docs/verify/fixed-clock.mjs, vitest.config.ts, package.json, AGENTS.md, .gitignore, docs/directives/git-and-prs.md, docs/verify/quick-check.sh, .github/pull_request_template.md

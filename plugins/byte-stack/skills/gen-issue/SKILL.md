@@ -1,13 +1,15 @@
 ---
-name: byte-gh-issue
-description: Create a GitHub issue in the current repo with the gh CLI - a typed, verb-first title, a concise Markdown body (Why, Requirements, Changes, General Steps, Definition of Done, References) and fitting existing labels.
+name: gen-issue
+description: Create a GitHub issue in the current repo with the gh CLI - a typed, verb-first title, a concise Markdown body (Why, Requirements, Changes, General Steps, Definition of Done, References) and fitting existing labels. Use when the user asks to file, open or create a GitHub issue, or to turn a request into one.
 argument-hint: "[--grill] <what the issue is about>"
-disable-model-invocation: true
+disable-model-invocation: false
 ---
 
-# /byte-gh-issue
+# /byte-stack:gen-issue
 
 Request: $ARGUMENTS
+
+It posts to GitHub, so run it when the user asks for an issue or a skill or playbook the user started calls for one; otherwise ask the user first.
 
 If the request starts with `--grill`, strip the flag and run Step 1b after Step 1; without it, skip Step 1b.
 

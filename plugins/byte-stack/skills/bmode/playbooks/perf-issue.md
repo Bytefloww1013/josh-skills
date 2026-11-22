@@ -4,7 +4,7 @@
 
 Not established in bphs-connect: benchmark, profiler, load-test or Lighthouse tooling, in-code timing calls, or a CI perf job. You build the measurement.
 
-1. Name the branch by `docs/directives/git-and-prs.md`. The directive has no perf descriptor. The repo's `byte-gh-issue` skill files a performance fault as a bug, so use `bug`, which maps to the `fix` type.
+1. Name the branch by `docs/directives/git-and-prs.md`. The directive has no perf descriptor. byte-stack's `gen-issue` skill files a performance fault as a bug, so use `bug`, which maps to the `fix` type.
 2. Run the repo's `diagnosing-bugs` skill on its perf branch. Logs are usually the wrong tool. Establish a baseline measurement (timing harness, `performance.now()`, profiler, query plan), then bisect. Measure first, fix second.
 3. Build the harness as the skill's Phase 1 loop: one command, already run, that shows the user's slowdown. Options in this repo:
    - A Vitest test against the test kit's in-memory database with the real migrations. A test times out at 20 seconds (`vitest.config.ts`).
@@ -23,4 +23,4 @@ For sustained improvement against a metric rather than a one-off fix, use Hillcl
 
 **Reply:** the command, the baseline and post-fix numbers with run count and range, the delta, the limiter, and any artifact path.
 
-Sources: .claude/skills/diagnosing-bugs/SKILL.md, .claude/skills/byte-gh-issue/SKILL.md, docs/directives/git-and-prs.md, docs/directives/production-safety.md, AGENTS.md, vitest.config.ts, server/testing/index.ts, docs/verify/scratch-server.sh, .gitignore, docs/verify/quick-check.sh, docs/verify/gate-checks.txt, modules/assets/server/conditions-index.test.ts, modules/tasks/server/summary.test.ts
+Sources: .claude/skills/diagnosing-bugs/SKILL.md, docs/directives/git-and-prs.md, docs/directives/production-safety.md, AGENTS.md, vitest.config.ts, server/testing/index.ts, docs/verify/scratch-server.sh, .gitignore, docs/verify/quick-check.sh, docs/verify/gate-checks.txt, modules/assets/server/conditions-index.test.ts, modules/tasks/server/summary.test.ts
