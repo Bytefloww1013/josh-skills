@@ -36,7 +36,8 @@ Save it as `<RUN_DIR>/report.md` and run `python3 -I <bmode>/references/briefs/c
 | `DONE` | Review gates below. |
 | `BLOCKED`, missing context | A scout with the exact question; update the spec and owned files; a fresh implementor. |
 | `BLOCKED`, base or branch wrong | Recheck `origin/main`. If the new base is safe, a fresh implementor on it; else ask the user. |
-| `BLOCKED`, red after two fixes, or the spec fights the code | Stop. Give the user the output and the blocker. |
+| `BLOCKED`, red after two fixes, or a report the checks contradict | Under T3, the next model in the policy's list builds the ticket afresh (`t3-model-routing.md`, When an implementor fails). With no model left, or outside T3: stop, and give the user the output and the blocker. |
+| `BLOCKED`, the spec fights the code | Stop. Give the user the blocker. |
 
 **Review gates (every `DONE` branch, before the push)**
 
@@ -57,7 +58,7 @@ Save it as `<RUN_DIR>/report.md` and run `python3 -I <bmode>/references/briefs/c
 
 - Two scouts per open question.
 - Two `BLOCKING` rounds per task.
-- One fresh implementor after `BLOCKED`, and only once the blocker is gone.
+- One fresh implementor after `BLOCKED` for missing context or a wrong base, and only once the blocker is gone; a red branch moves down the policy's list instead.
 
 At a limit, stop and give the user the evidence.
 
