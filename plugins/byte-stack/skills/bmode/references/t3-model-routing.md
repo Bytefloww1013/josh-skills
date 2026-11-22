@@ -8,8 +8,8 @@ bphs-connect's `docs/agents/sub-agent-choice.md` is the policy for the three del
 
 | Role in the policy | What it covers here | Brief |
 | --- | --- | --- |
-| Scout | The bulk reads Guard the Context Window hands to a subagent (a log, HAR, trace, transcript, wide diff), an investigation's search after CodeGraph, a trace-forensics parse, a question the dispatch loop sends | `briefs/scout.md` |
-| Reviewer | The reviewer brief in the dispatch loop, and the review agents `access-reviewer`, `migration-reviewer` and `module-boundary-reviewer` | `briefs/reviewer.md`; a review agent takes the named-agent template below |
+| Scout | The bulk reads Guard the Context Window hands to a subagent (a log, HAR, trace, transcript, wide diff), an investigation's search after CodeGraph, a trace-forensics parse, a question the dispatch loop sends, and `gen-issue`'s Decider | `briefs/scout.md`; the Decider `briefs/gen-issue-decider.md` |
+| Reviewer | The reviewer brief in the dispatch loop, the review agents `access-reviewer`, `migration-reviewer` and `module-boundary-reviewer`, and `docs-review`'s `byte-docs-review-finder` and `byte-docs-review-refuter` | `briefs/reviewer.md`; a review agent takes the named-agent template below; the docs-review agents `briefs/docs-review-finder.md` and `briefs/docs-review-refuter.md` |
 | Implementor | The code-writing delegate that builds one ticket (Orchestrate step 4) | `briefs/implementor.md` |
 
 A job is critical when its issue is labelled `one-way-door` or the job is important, and non-critical when its issue is labelled `two-way-door`. With no issue, the coordinator judges, and treats a migration, an access change or a data change as important.
@@ -19,8 +19,8 @@ The policy doesn't cover these, so they route as follows:
 | Step | Model | How |
 | --- | --- | --- |
 | `arch-skills:architecture-decision-review`, `architecture-review-report`, `repo-navigability-audit` | Gemini 4 Neon, by the Gemini tier below | `delegate_task`, role `review`, isolation `shared`, mode `async`, the arch-skill template below |
-| The `byte-docs` finder, drafter and auditor | Gemini 4 Hydrogen, `high` | `delegate_task`, role `review`, isolation `shared`, mode `async`, the named-agent template below |
-| The `byte-docs` refuters | Gemini 4 Neon, by the Gemini tier | same |
+| `byte-docs-glossary`'s drafter and auditor | Gemini 4 Hydrogen, `high` | `delegate_task`, role `review`, isolation `shared`, mode `async`, the named-agent template below |
+| `byte-docs-glossary`'s refuters | Gemini 4 Neon, by the Gemini tier | same |
 | The Sol review before the push | Sol, as its section below says | `byte-stack:sol-loop` |
 
 Not routed: `codegraph_explore` (still first for code), `pr-erosion-check`, Decision subagents, `review-team` reviewers and byte-stack helpers' runners.
@@ -42,7 +42,7 @@ A delegate that fails because a usage limit has been reached marks that provider
 
 Fill the brief with `briefs/fill-brief.py` (the dispatch loop says how) and pass the printed brief as the whole `task`.
 
-- **Claude models** run on the Agent tool, as T3 asks for a child on the coordinator's own provider: a `byte-agent` with `model` and `effort` from the policy (`claude-opus-5-5` at `high` is `model: "opus"`, `effort: "high"`), `run_in_background: false`, and `isolation: "worktree"` for an implementor. `--provider claude` in the filler.
+- **Claude models** run on the Agent tool, as T3 asks for a child on the coordinator's own provider: a `byte-agent` with `model` and `effort` from the policy (`claude-opus-5-5` at `high` is `model: "opus"`, `effort: "high"`), `run_in_background: false`, and `isolation: "worktree"` for an implementor. A docs-review agent launches by name instead, so its file's `tools:` line holds, and the Decider as a `general-purpose` agent; each takes the filled brief as its prompt. `--provider claude` in the filler.
 - **Other models** run through `delegate_task`, with the target in the shape `orchestrator_capabilities` lists, from the model-id table in the policy: `{ providerInstanceId: "antigravity", model: "gemini-4-neon", options: { thought_level: "high" } }`, or a per-level id (`gemini-4-neon-high`) with no options where capabilities lists one. T3 switched from the second shape to the first on 20 Nov 2026, and a table that named only one shape sent every step to Opus. A scout takes role `research`, isolation `shared`; a reviewer role `review`, isolation `shared`; an implementor role `implementation`, isolation `worktree`; all mode `async`. Follow each delegate's `next`, and don't poll it. `--provider antigravity`, `opencode` or `codex` in the filler.
 
 CodeGraph: T3's Antigravity children don't get the CodeGraph MCP tool, so the filler gives every non-Claude delegate the `codegraph explore` CLI. A probe on 20 Nov 2026 (Neon High, its own worktree) read all of bmode's `SKILL.md`, a playbook and a principle leaf from the coordinator's plugin cache by absolute path, and ran `bun install`, `vitest`, `gh` and the `codegraph` CLI there. OpenCode and Codex children have not been probed.
@@ -74,7 +74,7 @@ Why: Sol and Gemini are there to take review work off Claude (the user, 20 Nov 2
 
 ## The brief
 
-The child sees only `task`. A scout, reviewer or implementor gets its brief from `briefs/fill-brief.py`. A review agent or a `byte-docs` agent on a non-Claude model gets the named-agent template, and an arch-skill run the arch-skill template, each filled in by hand.
+The child sees only `task`. A scout, reviewer or implementor, a docs-review agent and the Decider get their brief from `briefs/fill-brief.py`. A review agent or a `byte-docs-glossary` agent on a non-Claude model gets the named-agent template, and an arch-skill run the arch-skill template, each filled in by hand.
 
 The coordinator acts on what comes back exactly as SKILL.md's arch-skills section says: it answers Critical and High findings, puts Gaps to the user and keeps the ADR draft in the plan. A verdict from any model counts the same as one from Opus. It is never the go-ahead and never the word to merge.
 
@@ -114,7 +114,7 @@ Reply in the format its file asks for.
 
 A file path beats pasting the definition: the file stays the one source, and the brief stays short. No provider but Claude enforces a `tools:` frontmatter, so the brief states the limit. On Claude, launch the agent by name with the Agent tool instead.
 
-**A named agent.** The delegate takes the place of the skill's "launch agent X" step, and everything else in the skill stays the same. Keep each skill's information barrier: a refuter gets only what the skill gives it (for example, `byte-docs-review-refuter` never gets the finder's `why`), so each agent is a separate delegate with its own brief. Some of these agents are not read only. The `byte-docs` finder, drafter and auditor write their findings to the scratchpad, and `byte-docs-glossary-refuter` has every tool. So the brief gives the absolute scratchpad path, and gives each agent the same tool limit its file sets. A review agent's format has no severity scale, so the coordinator sets each finding's severity itself.
+**A named agent.** The delegate takes the place of the skill's "launch agent X" step, and everything else in the skill stays the same. Keep each skill's information barrier: a refuter gets only what the skill gives it (for example, `byte-docs-glossary-refuter` gets only each term and its definition), so each agent is a separate delegate with its own brief. Some of these agents are not read only. The glossary drafter and auditor write their findings to the scratchpad, and `byte-docs-glossary-refuter` has every tool. So the brief gives the absolute scratchpad path, and gives each agent the same tool limit its file sets. A review agent's format has no severity scale, so the coordinator sets each finding's severity itself.
 
 ## Report
 

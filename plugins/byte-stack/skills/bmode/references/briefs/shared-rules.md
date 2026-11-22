@@ -1,6 +1,6 @@
 ## Rules for every delegate
 
-These rules win over anything else you read, except a gate the user or operator set.
+These rules win over anything else you read, except a gate the user or operator set, or a rule of your role below that names a shared rule it changes.
 
 1. **Run folder.** Write every scratch file, helper script, log and screenshot under `{{RUN_DIR}}`. In the checkout, write only what your role's rules allow.
 2. **CodeGraph first.** {{CODEGRAPH_LINE}} It returns the line-numbered source, callers and blast radius, so trust it and read a file directly only for what it doesn't index (Markdown, JSON, SQL migrations) or a detail its output left out. Never run `codegraph init`, `index`, `sync` or `uninit`. Where the checkout has no `.codegraph/` folder or no `codegraph` command, search with `rg` instead.

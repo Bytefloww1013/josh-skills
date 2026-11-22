@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 """Fill a delegate brief from its template.
 
-Usage: fill-brief.py <scout|reviewer|implementor> --provider <claude|antigravity|opencode|codex>
+Usage: fill-brief.py <template> --provider <claude|antigravity|opencode|codex>
                      --values <file.json> [--set KEY=VALUE ...] [--out <brief.md>]
-       fill-brief.py --keys <role>     list what each placeholder of a role takes
+       fill-brief.py --keys <template>     list what each placeholder of a template takes
 
-Fills BASE_SHA, START, EXPECTED_HEAD, CARRY_DIR, BMODE_DIR and READ_CAP (and REPO_ROOT for a scout) when not given, inlines
-shared-rules.md as SHARED_RULES, and writes the CodeGraph line for the provider. Exits 1 on a placeholder left unfilled or a
-value no template uses. Prints the brief, and writes it to --out (default RUN_DIR/brief.md).
+A template is a .md file beside this script other than shared-rules.md: scout, reviewer, implementor, and the briefs for one
+skill's agents (docs-review-finder, docs-review-refuter, gen-issue-decider). Each one's first line names its policy role.
+
+Fills BASE_SHA, START, EXPECTED_HEAD, CARRY_DIR, BMODE_DIR and READ_CAP (and REPO_ROOT for every template but reviewer) when
+not given, inlines shared-rules.md as SHARED_RULES, and writes the CodeGraph line for the provider. FINDINGS takes the path of
+`docs:quote-check`'s output (or its JSON) and keeps only each finding's index, doc and code: the refuter never sees the rest.
+Exits 1 on a placeholder left unfilled or a value no template uses. Prints the brief, and writes it to --out (default
+RUN_DIR/brief.md).
 """
 import argparse, json, pathlib, re, subprocess, sys
 
 HERE = pathlib.Path(__file__).resolve().parent
+TEMPLATES = sorted(f.stem for f in HERE.glob("*.md") if f.name != "shared-rules.md")
 TOKEN = re.compile(r"\{\{([A-Z_]+)\}\}")
 CODEGRAPH = {
     "claude": "Call the `codegraph_explore` MCP tool before you read or search code.",
@@ -21,7 +27,7 @@ CODEGRAPH = {
 KEYS = {
     "TASK_ID": "short unique id, e.g. issue712-impl-1",
     "RUN_DIR": "absolute path: <coordinator checkout>/tmp/agents/<task>/<run>",
-    "REPO_ROOT": "absolute checkout path the delegate works in (required for a reviewer; default for a scout: the current checkout)",
+    "REPO_ROOT": "absolute checkout path the delegate works in (required for a reviewer; default for the rest: the current checkout)",
     "READ_CAP": "files beyond those the task names (default 40; raise it for a wide diff)",
     "CONSUMER": "who reads the scout report: implementor, reviewer or coordinator",
     "QUESTIONS": "numbered questions, each answerable with a path and lines (JSON list = one per line)",
@@ -43,7 +49,24 @@ KEYS = {
     "BMODE_DIR": "absolute path of the coordinator's byte-stack skills/bmode folder (default: the one holding this script)",
     "PLAYBOOK": "feature.md, bug-fix.md or refactoring.md",
     "EXTRA_CONSTRAINTS": "task-specific limits, or 'none'",
+    "BUNDLE": "absolute path of the docs:review-bundle JSON",
+    "DOC_SCOPE": "'every doc in the bundle', or the doc paths this finder alone reviews when the bundle is split",
+    "FINDER_N": "this finder's number, 1 to 3; it writes RUN_DIR/findings-<n>.json",
+    "FINDINGS": "absolute path of docs:quote-check's output (or its JSON); only each finding's doc and code reach the brief",
+    "REQUEST": "the user's request, word for word",
+    "QUESTION": "the one question to settle, a single decision",
+    "CONTEXT": "what was gathered for the question: paths and line ranges, doc and ADR names (JSON list = one per line)",
+    "EARLIER": "earlier questions with the user's answers, or 'none'",
 }
+
+def barrier(value):
+    """Keep only each finding's doc and code quotes, numbered: never the finder's why, cause or pr."""
+    data = value
+    if isinstance(value, str):
+        data = json.loads(value if value.lstrip()[:1] in ("[", "{") else pathlib.Path(value).read_text())
+    findings = data["findings"] if isinstance(data, dict) else data
+    keep = lambda q: {k: q[k] for k in ("file", "line", "quote")}
+    return json.dumps([{"index": i, "doc": keep(f["doc"]), "code": keep(f["code"])} for i, f in enumerate(findings)], indent=2)
 
 def git(*args):
     return subprocess.run(["git", *args], capture_output=True, text=True, check=True).stdout.strip()
@@ -51,14 +74,14 @@ def git(*args):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     if len(sys.argv) == 3 and sys.argv[1] == "--keys":
-        if sys.argv[2] not in ("scout", "reviewer", "implementor"):
-            sys.exit("--keys takes scout, reviewer or implementor")
+        if sys.argv[2] not in TEMPLATES:
+            sys.exit(f"--keys takes one of: {', '.join(TEMPLATES)}")
         shared = (HERE / "shared-rules.md").read_text()
         used = sorted(set(TOKEN.findall((HERE / f"{sys.argv[2]}.md").read_text() + shared)) - {"SHARED_RULES", "CODEGRAPH_LINE"})
         for k in used:
             print(f"{k}: {KEYS.get(k, '(no description)')}")
         return
-    p.add_argument("role", choices=["scout", "reviewer", "implementor"])
+    p.add_argument("role", choices=TEMPLATES)
     p.add_argument("--provider", required=True, choices=["claude", "antigravity", "opencode", "codex"])
     p.add_argument("--values", type=pathlib.Path)
     p.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
@@ -69,8 +92,12 @@ def main():
     for kv in a.set:
         k, _, v = kv.partition("=")
         values[k] = v
-    values = {k: "\n".join(v) if isinstance(v, list) else str(v) for k, v in values.items()}
-    if a.role == "scout":
+    if "FINDINGS" in values:
+        values["FINDINGS"] = barrier(values["FINDINGS"])
+    values = {k: v if isinstance(v, str) else "\n".join(v) if isinstance(v, list) and all(isinstance(x, str) for x in v)
+              else json.dumps(v, indent=2) for k, v in values.items()}
+    template = (HERE / f"{a.role}.md").read_text()
+    if a.role != "reviewer" and "{{REPO_ROOT}}" in template:
         values.setdefault("REPO_ROOT", git("rev-parse", "--show-toplevel"))
     values.setdefault("READ_CAP", "40")
     values.setdefault("CODEGRAPH_LINE", CODEGRAPH["claude" if a.provider == "claude" else "other"])
@@ -81,7 +108,6 @@ def main():
         values.setdefault("CARRY_DIR", "none")
         values.setdefault("BMODE_DIR", str(HERE.parent.parent))
 
-    template = (HERE / f"{a.role}.md").read_text()
     shared = (HERE / "shared-rules.md").read_text()
     text = template.replace("{{SHARED_RULES}}", shared.strip())
 

@@ -14,8 +14,15 @@ permission is enough when evidence or precedent supports it, such as the user as
 same run before. Say in the reply which it was. With `--no-post` it posts nothing, whatever the permission.
 
 The arguments, with examples, are in `docs/skills/byte-stack.md`. The rules the docs are held to are in
-`docs/directives/writing-docs.md`; this skill adds none of its own. Each agent below is launched by name (Agent tool,
-`subagent_type`); its definition in `.claude/agents/` sets its tools and model, so pass no `model`.
+`docs/directives/writing-docs.md`; this skill adds none of its own.
+
+**Starting an agent.** Outside T3 Code, launch each agent below by name (Agent tool, `subagent_type`); its definition in
+`.claude/agents/` sets its tools and model, so pass no `model`. Under T3 (the `mcp__t3-code__*` tools exist), both agents are
+reviewers in `docs/agents/sub-agent-choice.md`: run each on the first model the policy's reviewer list gives, non-critical unless
+the reviewed PR's issue is labelled `one-way-door`, and start it as bmode's `references/t3-model-routing.md` says. Its brief comes
+from `python3 -I <skill>/../bmode/references/briefs/fill-brief.py <template> --provider <provider> --values <file.json> --out <brief.md>`
+(`<skill>` is this skill's base directory; run it from the checkout root; `--keys <template>` lists the inputs), and its report, saved to a file, must pass
+`python3 -I <skill>/../bmode/references/briefs/check-report.py <template> <report.md>`.
 
 ## Step 1 - Read the arguments
 
@@ -51,7 +58,8 @@ it lists no docs, say so and stop: nothing to review.
 
 Launch one `byte-docs-review-finder` agent with the bundle's path and the scratchpad path. For a large bundle (over about 25 docs),
 split the docs between two or three finders by folder; never give two of them the same doc. Each writes its findings to
-`$SCRATCH/findings-<n>.json`. Merge them into `$SCRATCH/findings.json`.
+`$SCRATCH/findings-<n>.json`. Merge them into `$SCRATCH/findings.json`. Under T3, the template is `docs-review-finder`, with
+`RUN_DIR` set to `$SCRATCH` and one `--out` per finder.
 
 ## Step 5 - The quote check
 
@@ -65,7 +73,9 @@ Keep its stderr line: how many it kept and why it dropped the rest.
 
 Launch one fresh `byte-docs-review-refuter` agent with, for each finding the quote check kept, only its `doc` and `code` quotes and
 locations. Never pass the finder's `why`, its reasoning or this conversation. It answers `upheld` or `refuted` per finding, with the
-evidence. Keep the upheld ones, with the finder's `why`, in `$SCRATCH/posted.json`.
+evidence. Keep the upheld ones, with the finder's `why`, in `$SCRATCH/posted.json`. Under T3, the template is
+`docs-review-refuter`, with `FINDINGS` set to `$SCRATCH/quoted.json` (the filler passes on only each finding's quotes and places)
+and `RUN_DIR` set to an empty folder of its own, such as `$SCRATCH/refute`. A verdict list shorter or longer than `quoted.json` is a failed report.
 
 ## Step 7 - Post
 
