@@ -42,10 +42,10 @@ For a UI change, take the screenshots before the council starts. DeepSeek cannot
 
 - If the user names the council's members, use those. When a member the user named is down, report it and do not substitute. The fallback below is only for the default seats.
 - Take the model ids from `orchestrator_capabilities`. When the id in the table is no longer offered, that seat is down. Tell the user which ids are offered now, so the table can be updated.
-- Read the usage with `python3 -I <this skill>/scripts/provider-usage.py`, before round 1 and again before each later round. It prints the `gemini` and `codex` 5-hour windows as a percent left. When a row reads `unknown`, use the seat's default and rely on the fallback below.
+- Read the usage with `python3 -I <this skill>/scripts/provider-usage.py`, before round 1 and again before each later round. It prints a percent left for `codex` (5-hour window) and for each Antigravity account: `gemini` (`antigravity`) and `gemini:antigravity_2`, each the tighter of its 5-hour and weekly windows. The Gemini seat runs on `antigravity` while it has usage left, and otherwise on `antigravity_2` with the same model; it is down only when both are. When a row reads `unknown`, use the seat's default and rely on the fallback below.
 - A seat is down when its usage is 0%, when its provider or model is not offered, or when its delegate fails on a usage limit or cannot connect. Then that seat's round runs on DeepSeek, and the report says which seat fell back and why. Report any other failure to the user, and do not swap that seat.
 - These fallbacks are the user's standing instructions. Make no other substitution. If two or more seats are down in one round, tell the user that the council has lost provider diversity before you score that round.
-- The usage-limit error text has not yet been seen. Record it in this file the first time it happens.
+- Antigravity's usage-limit text (seen 23 Nov 2026): `Individual quota reached. Please upgrade your subscription to increase your limits. Resets in <h>h<m>m<s>s.` (HTTP 429). `⚠ Verification Required` (HTTP 403) means the user must verify that account: try the other account, and tell the user.
 - Images: Claude, Gemini and GPT read the PNG files. DeepSeek V4.1 Flash is treated as text only (see section 2).
 - Cost: a full Gemini review used about 6% of the Gemini 5-hour window in testing. Read the usage before each round, not once per run.
 
