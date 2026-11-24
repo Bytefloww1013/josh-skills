@@ -2,14 +2,16 @@
 
 **bphs-connect has no harness to measure how a skill change moves agent behavior. Say so, then run the checks it has.**
 
+**Skills:** load each with the Skill tool when its step or condition comes up. Its steps name `byte-stack:docs-review`, `byte-stack:principle-explain-the-number`, `byte-stack:swarm`. Also load `byte-stack:principle-build-the-lever` for the rerunnable comparison.
+
 Not established in bphs-connect: eval or benchmark tooling for skills or the repo (no eval or bench scripts, `package.json` entries, directories or files).
 Not established in bphs-connect: a script, test or CI step that checks what any skill makes an agent do. `docs:check` reads only a skill's doc and `argument-hint` (`scripts/docs/skills.ts`).
 Nothing runs AI in CI (`docs/skills/byte-stack.md`).
 
 1. Tell the user no eval harness exists. The checks below cover the skill's doc, not the agent's behavior.
 2. Run `bun run docs:check` and `bun run docs:stale`. `docs:check` fails when `docs/skills/<name>.md` lacks its five sections, its Install line or an argument named in the skill's `argument-hint` (`scripts/docs/skills.ts`). `docs:stale` fails when the skill's files changed but `docs/skills/<name>.md` did not, unless the PR body has `docs-unaffected: <doc> - <reason>`. Locally it diffs against `origin/main` and reads the PR body from `tmp/pr-body.md` (or `--body-file <file>`). CI runs it on each PR to `main` as `Stale docs`.
-3. Run byte-stack's `docs-review` skill as `pr` (`pr --base origin/main` when the branch has no PR yet), with the permission its first lines ask for. It needs `gh` logged in, and runs the script checks first. `--no-post` prints the findings instead of posting a PR comment. It runs locally only, so its findings never block a merge.
-4. When the question is whether a sentence changes behavior, `writing-for-agents` says to settle it by running the document, not by debate (`## Pruning`). The repo gives no harness for that run, so run it through the **swarm** helper: two race arms on the same task, one with the sentence and one without, the same number of workers in each, `rank all` declared and the done predicate fixed before the fan-out. Report what every run did, whether every run did the task, and whether the difference held across runs (**principle-explain-the-number**).
+3. Run the `byte-stack:docs-review` skill as `pr` (`pr --base origin/main` when the branch has no PR yet), with the permission its first lines ask for. It needs `gh` logged in, and runs the script checks first. `--no-post` prints the findings instead of posting a PR comment. It runs locally only, so its findings never block a merge.
+4. When the question is whether a sentence changes behavior, `writing-for-agents` says to settle it by running the document, not by debate (`## Pruning`). The repo gives no harness for that run, so run it through the `byte-stack:swarm` helper: two race arms on the same task, one with the sentence and one without, the same number of workers in each, `rank all` declared and the done predicate fixed before the fan-out. Report what every run did, whether every run did the task, and whether the difference held across runs (`byte-stack:principle-explain-the-number`).
 
 **Closest patterns in the repo:**
 

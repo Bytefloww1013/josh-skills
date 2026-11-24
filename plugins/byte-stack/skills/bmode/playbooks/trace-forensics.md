@@ -2,10 +2,12 @@
 
 **You own the diagnosis from the artifact.** The capture already exists. It is a fixed dataset: read it, do not re-run it. Runtime forensics (`playbooks/runtime-forensics.md`) instruments the live process instead.
 
+**Skills:** load each with the Skill tool when its step or condition comes up. Its steps name `byte-stack:principle-guard-the-context-window`, `byte-stack:swarm`. Also load `byte-stack:principle-explain-the-number` for any timing in the artifact; `byte-stack:principle-fix-root-causes` when the diagnosis names a fault.
+
 Not established in bphs-connect: profiler or trace tooling, or a place or format for a handed-over artifact. Git-ignored `tmp/` holds only the `docs/verify` scripts' own scratch output (`tmp/browser`, `tmp/scratch-server`). The artifacts the `diagnosing-bugs` skill asks a user for are a redacted HAR file, log dump, core dump, or screen recording with timestamps.
 
 1. Redact first. Captured artifacts carry auth headers. Write `<REDACTED>` for every secret, and quote only the lines that carry the signal.
-2. Identify the format and load it with a tool that fits it. Parse a large artifact in a subagent and keep only the reduced finding in the main thread (**principle-guard-the-context-window**). When the capture splits into parts, such as several files or the time windows of one long log, run the **swarm** helper with one worker per part. Each reports `PASS`, `ISSUES` with the redacted lines that carry the signal, or `BLOCKED`. Put derived output under `tmp/`, which git ignores. Never read staging's database or its pulled backups except through the staging script (`scripts/staging.sh`), and never copy them into the repo, `tmp/` or a test.
+2. Identify the format and load it with a tool that fits it. Parse a large artifact in a subagent and keep only the reduced finding in the main thread (`byte-stack:principle-guard-the-context-window`). When the capture splits into parts, such as several files or the time windows of one long log, run the `byte-stack:swarm` helper with one worker per part. Each reports `PASS`, `ISSUES` with the redacted lines that carry the signal, or `BLOCKED`. Put derived output under `tmp/`, which git ignores. Never read staging's database or its pulled backups except through the staging script (`scripts/staging.sh`), and never copy them into the repo, `tmp/` or a test.
 3. Narrow to the cause.
    - An HTTP error answer is JSON: `{ "error": <code>, "message": ..., "details"?: ... }`. Look up the status and code in `docs/references/api-errors.md`, which names the file that throws it.
    - A server log line maps to its source by its text. The known lines are listed in Runtime forensics step 3.

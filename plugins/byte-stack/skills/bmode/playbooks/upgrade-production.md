@@ -2,6 +2,8 @@
 
 **Ship only a tagged release that rehearsed green, and run each `**Stop:**` step only on the operator's go-ahead for that step, given in this session.**
 
+**Skills:** load each with the Skill tool when its step or condition comes up. Also load `byte-stack:principle-prove-it-works` after the switch; `byte-stack:principle-make-operations-idempotent` before you repeat a step.
+
 `docs/how-to/upgrade-production.md` is the procedure. Follow its steps in order and quote each one's "Expect" result. The old version keeps serving until the switch, its step 9. The settings check, its step 7, and the rehearsal, its step 8, come before it: the switch never runs without a green result block for the same commit and backup. Throughout, never run `docker compose down -v`, remove `bphs-connect-data` or prune volumes: each can delete the data (`docs/how-to/upgrade-production.md`, Guidance).
 
 1. **Release first.** Production gets only a tagged release of `main` (`docs/directives/versioning.md`). Check that no release PR is open (`gh pr list --state open --head release-please--branches--main--components--bphs-connect` lists none) and that the newest release exists (`gh release view` names its tag). An open release PR is merged only on the user's word (`playbooks/shipping.md`), and its Release run then tags it. Until both hold, stop and report what is waiting.

@@ -2,6 +2,8 @@
 
 **You own the diagnosis. Read the live process, do not theorize from source.** The deliverable is a cited diagnosis, not a fix.
 
+**Skills:** load each with the Skill tool when its step or condition comes up. Its steps name `byte-stack:principle-fix-root-causes`. Also load `byte-stack:how` when the symptom runs through code you have not traced; `byte-stack:principle-guard-the-context-window` for long logs; `byte-stack:principle-attack-the-premise` when two explanations have failed.
+
 Not established in bphs-connect: CPU profiles, heap snapshots, tracing, a logging library, or request IDs. The live signals are the server's `console` output, the `hono/logger` request lines, and the browser's console and page errors.
 
 1. Pick the surface and find its log.
@@ -22,7 +24,7 @@ Not established in bphs-connect: CPU profiles, heap snapshots, tracing, a loggin
    - In the browser, `node docs/verify/browser.mjs <address>` keeps a log of console and page errors for each page.
 4. Map an error answer to its source with `docs/references/api-errors.md`: each status and code, with the file that throws it.
 5. Prove the mechanism before believing it. First write 3 to 5 ranked, falsifiable hypotheses and show them to the user. Then add temporary logs tagged with a unique prefix such as `[DEBUG-a4f2]`, each mapped to one prediction, one variable at a time. Temporary production instrumentation needs the user's permission, and recreating the container is a `**Stop:**` step (`docs/how-to/run-project.md`, "Recreate the container"). Grep the prefix and remove every hit when done.
-6. Map the finding to source: file, symbol, line. Name the first place the code went wrong, not the line that logged it (**principle-fix-root-causes**).
+6. Map the finding to source: file, symbol, line. Name the first place the code went wrong, not the line that logged it (`byte-stack:principle-fix-root-causes`).
 
 **Reply:** the signal captured, the reduced finding, how you proved the mechanism, the source location, and any artifact paths. No fix unless asked. Once the cause is known, hand back to Bug fix (`playbooks/bug-fix.md`) or Perf issue (`playbooks/perf-issue.md`).
 

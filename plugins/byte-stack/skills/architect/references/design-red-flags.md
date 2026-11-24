@@ -1,6 +1,8 @@
 # Design red flags
 
-Screen every candidate before synthesis. A red flag is a reason to revise or reject the shape.
+Use this reference in Phase 3 of the architect skill: screen both plans before the arch-skills review, and record each red flag in the plan's **Red flags found** section with the place in the plan it rests on. The review weighs them. In the fallback with no arch-skills, the pick counts them ([review-and-pick.md](review-and-pick.md)).
+
+Assume the next contributor is an agent that sees only the files it opened, copies the nearest example, and takes the shortest path that compiles. Prefer the design where a change that looks right from one file is right for the whole repo. A red flag is a reason to revise or reject the shape.
 
 ## Shallow module
 

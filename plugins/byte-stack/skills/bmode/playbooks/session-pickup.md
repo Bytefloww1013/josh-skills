@@ -2,6 +2,8 @@
 
 **You own the resume point. Read what the last context left, check it against the repo, and carry on from the first undone step.**
 
+**Skills:** load each with the Skill tool when its step or condition comes up. Its steps name `byte-stack:principle-prove-it-works`. Also load `byte-stack:how` when the resumed work runs through code you have not traced.
+
 1. Find the trail.
    - After an autocompact, the handoff-guard hook pastes the last handoff in as "Previous context", capped at 9000 characters. A longer one ends with the path to read the rest. Use it with the compact summary. Where they differ, the summary is newer. Tell the user in one line that you resumed with the handoff.
    - In a new session nothing loads a handoff. Read the newest `handoff/handoff-<YYYYMMDD-HHMMSS>.md` yourself. `handoff/` is gitignored, handoffs are never committed, and the hook keeps the newest three on disk.
@@ -11,7 +13,7 @@
 3. Name the resume point. It is the handoff's Next step 1, which `byte-handoff` writes so it can start without the transcript, or the plan's first `- [ ]` slice. `.claude/skills/byte-gh-issue-claim/scripts/check-plan.sh <plan>` prints that slice on a `NEXT:` line (on Windows, `pwsh -NoProfile -File` on the `.ps1`). Ticked slices are done. Do not redo them.
 4. To resume a claim run, the user runs `/byte-gh-issue-claim <N>` again. Its Step 0 needs an empty `git status --porcelain` (else it gates: stash, commit or abort, and never discards the user's changes), finds the plan and a branch matching `*/*-issue<N>-*`, runs `check-plan`, and gates: resume at the first unchecked slice, or start fresh. Flags given now win over the recorded ones.
 5. For spec tickets, take a ticket whose blockers are all closed. For a wayfinder map, the frontier is the open children with no open blocker and no assignee, first in map order. If the user named a ticket, use it; otherwise take the first frontier ticket. A wayfinder session claims it first, before any work, with `gh issue edit <n> --add-assignee @me`. The assignee is the claim: concurrent sessions skip an assigned ticket.
-6. Route the rest to the playbook that fits it. Prove inherited claims with the repo's gates, not the prior report (**principle-prove-it-works**): `docs/verify/quick-check.sh`, then the branch's `docs/verify/verify-done.sh` (exit 0 means done). `quick-check.sh` formats in place first, so it can change files. The branch's checks fail while a plan slice is unticked or the issue's notes block is still in `AGENTS.md`, so mid-flight a FAIL there is expected. Git ignores `verify-done.sh`, so a fresh checkout writes it again from `docs/verify/verify-done.template.sh`.
+6. Route the rest to the playbook that fits it. Prove inherited claims with the repo's gates, not the prior report (`byte-stack:principle-prove-it-works`): `docs/verify/quick-check.sh`, then the branch's `docs/verify/verify-done.sh` (exit 0 means done). `quick-check.sh` formats in place first, so it can change files. The branch's checks fail while a plan slice is unticked or the issue's notes block is still in `AGENTS.md`, so mid-flight a FAIL there is expected. Git ignores `verify-done.sh`, so a fresh checkout writes it again from `docs/verify/verify-done.template.sh`.
 7. Tell the user about anything odd: a compacted context without the "Previous context" note after a handoff, or a stale or wrong handoff pasted in.
 
 Not established in bphs-connect: a startup or resume step that loads a handoff into a new session.

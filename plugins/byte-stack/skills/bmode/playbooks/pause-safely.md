@@ -2,6 +2,8 @@
 
 **You own a clean stop. Leave a handoff the next context can start from without the transcript.**
 
+**Skills:** load each with the Skill tool when its step or condition comes up. Also load `byte-handoff` (the repo's copy) for the handoff itself; `byte-stack:principle-guard-the-context-window` when HANDOFF REQUIRED fired.
+
 Pause when the user asks for a handoff, or when the handoff-guard hook prints HANDOFF REQUIRED. A handoff is not a stop: once it is saved, carry on with the task (`byte-handoff` step 4).
 
 1. Stop at a safe point. Finish the current slice or leave its box unticked. Tick a slice `- [x]` only when it is done and its tests pass.

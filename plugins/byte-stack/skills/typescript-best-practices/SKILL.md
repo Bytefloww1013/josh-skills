@@ -1,13 +1,13 @@
 ---
 name: typescript-best-practices
-description: TypeScript best practices. Use when reading or editing any .ts or .tsx file.
+description: TypeScript rules for types, narrowing, boundaries and tests, with examples. Use when writing, editing or reviewing any .ts or .tsx file, or when designing a TypeScript type or signature.
 paths: ["**/*.ts", "**/*.tsx"]
-disable-model-invocation: true
+disable-model-invocation: false
 ---
 
 # TypeScript best practices
 
-Apply the **type-system-discipline** principle skill first.
+Load the `byte-stack:principle-type-system-discipline` skill first: it says why these rules exist. Where the repo's lint config, AGENTS.md or directives set a different rule, follow the repo. Under bmode, its `references/principles.md` names the rows that change in bphs-connect.
 
 | Rule | Summary |
 |------|---------|
@@ -22,10 +22,10 @@ Apply the **type-system-discipline** principle skill first.
 | Type guards | Must verify the claim. A lying guard is worse than `as` because the bug hides behind a name that says it's safe. Name them `isX` or `hasX`. |
 | Exhaustiveness | Inline `const _exhaustive: never = x;` in default arms so the compiler errors when a new variant is added. |
 | `satisfies` over `as` | Validates the value without widening literal types. |
-| Boundary validation | Parse where data crosses in, into a named domain type. `Record<string, unknown>` (however spelled) stops at that parse. Trust types inside. See the **boundary-discipline** principle skill. |
+| Boundary validation | Parse where data crosses in, into a named domain type. `Record<string, unknown>` (however spelled) stops at that parse. Trust types inside. See the `byte-stack:principle-boundary-discipline` skill. |
 | Schema-derived types | Reach for `Pick`/`Omit`/`Parameters`/`ReturnType`/`Awaited`/`typeof` before declaring a new interface. |
 | Object args | Pass objects, not positional, so argument order is self-documenting. Skip on hot paths (per-frame render, tokenizers, parsers). |
-| Real tests | Don't mock what you can run. Prefer the framework's real test primitives with leak/disposable checks, and verify UI in a running build. Mock only what you can't run locally. |
-| Structured telemetry | Prefer structured logger diagnostics with enough context to debug from an id. No `console.log` in shipped code. |
+| Real tests | Don't mock what you can run. Prefer the framework's real test primitives with leak/disposable checks, and verify UI in a running build. Mock only what you can't run locally. See the `byte-stack:principle-test-behavior-not-implementation` skill. |
+| Structured telemetry | Prefer structured logger diagnostics with enough context to debug from an id. No `console.log` in shipped code, unless the repo has no logger and its lint rules allow `console`. |
 
-Examples: `references/patterns.md`.
+Examples for each rule: [references/patterns.md](references/patterns.md).

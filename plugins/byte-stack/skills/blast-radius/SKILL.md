@@ -1,6 +1,6 @@
 ---
 name: blast-radius
-description: "Find what a change could break somewhere else before it ships, beyond the diff, and prove the one fact it's safe because of by running real code instead of writing it up. Use for 'blast radius of X', 'what could this break', or reviewing a small diff you don't trust."
+description: "Find what a change could break somewhere else before it ships, beyond the diff, and prove the one fact it's safe because of by running real code instead of writing it up. Use for 'blast radius of X', 'what could this break', before merging a change you don't fully trust, or when filling in a PR's Blast Radius line."
 disable-model-invocation: false
 ---
 
@@ -8,9 +8,9 @@ disable-model-invocation: false
 
 Find what a change breaks somewhere else, before it ships. Use for "blast radius of X", "what could this break", or reviewing a small diff you don't trust yet.
 
-Companion to `how` and `why`. `how` tells you what the code does. `why` tells you why it's shaped that way. Blast radius tells you what it breaks somewhere else.
+Companion to the `byte-stack:how` skill. `how` tells you what the code does. Blast radius tells you what a change to it breaks somewhere else.
 
-Listing the callers is not the job. The agent can grep those in a second. The job is the breakage grep won't show you.
+Listing the callers is not the job. CodeGraph (`codegraph_explore`, when the repo has a `.codegraph/` index) or a search finds those in a second. The job is the breakage a symbol search won't show you.
 
 ## Don't trust your own writeup
 
@@ -35,7 +35,7 @@ Step 4 is usually one small script that imports the same library the app ships a
 3. Look where grep stops. Read the source of the library you call, and check its pinned version and any local patch. Work out when things run: microtasks, unmount and teardown, Solid versus React. Follow what a symbol search misses: the JSON an API returns, a DB column, a wire format, another language reading the same bytes, a feature flag, code three hops downstream.
 4. Be honest about each risk. Give it a real chance of happening and a real cost if it does. Keep the risks you confirmed. List the ones you checked and cleared separately. Cite a real `file:line`, a search that finds nothing is still an answer, and never make up a caller or an API.
 5. Prove the one fact. Write a script or test that runs the real code, run it, and paste what happened.
-6. For a big or wide change, run it as an `arena`. Ask more than one model the same question and merge the answers. Different models catch different real bugs.
+6. For a big or wide change, split it. Give each area the change reaches (a module, a data contract, a wire format) to its own subagent, all started in one message, each with the same question and its own area. Pick their models by the repo's subagent policy: in bphs-connect that is `docs/agents/sub-agent-choice.md`, scout role, applied as bmode's `references/subagents.md` says. When the policy lists more than one model, spread the subagents across them, since different models catch different real bugs. Treat every risk a subagent returns as step 1 on the scale above until you check it yourself, and merge risks that share a cause.
 
 ## What to hand back
 
@@ -45,6 +45,6 @@ Step 4 is usually one small script that imports the same library the app ships a
 - **Cleared.** What you checked and why it's fine.
 - **Before you merge.** The cheapest test or repro that catches the real bug, including the script you wrote.
 
-Write it through `unslop`, cite real code, and strip anything private before it goes anywhere public.
+Write it through the `byte-stack:unslop` skill, cite real code, and strip anything private before it goes anywhere public.
 
 **Reply:** the writeup above, with the one safety fact either proven or marked unproven.

@@ -2,6 +2,8 @@
 
 **Delete only what is merged and clean. Uncommitted work belongs to the user.**
 
+**Skills:** load each with the Skill tool when its step or condition comes up. Its steps name `arch-skills:pr-erosion-check`. Also load `byte-stack:principle-separate-before-serializing-shared-state` before you remove a worktree another run might own; `byte-stack:principle-prove-it-works` to confirm a branch merged before you delete it.
+
 Not established in bphs-connect: a worktree audit or cleanup script, any `git worktree prune` step, and any iOS simulator use. Every simulator, `simctl` or `xcrun` mention is under `.claude/skills`: the `impeccable` design references (`xcrun simctl` only in `reference/ios.md`) and a `teach` list of lesson widgets. None is in `docs/`, `scripts/` or `.github/`. Skip the simulator half.
 
 1. **Know where worktrees come from.** `improve`'s `execute` gives its executor subagent a worktree of its own (`isolation: "worktree"`), and a queue run gives each ticket's delegate one (`playbooks/orchestrate.md` step 4). `arch-skills:pr-erosion-check` adds a base worktree for its graph compare and removes it when done. `scripts/claude-edit-hooks.ts` guards an edit in a worktree under `.claude/worktrees/` like one in the repo. No repo file lists them; git's own `git worktree list` shows each worktree, its checked-out branch or detached HEAD, and whether it is prunable.

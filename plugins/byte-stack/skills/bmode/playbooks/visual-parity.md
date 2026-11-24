@@ -2,6 +2,8 @@
 
 **You own visual equivalence. bphs-connect cannot prove it by image diff. Parity here is a judgment made by looking at screenshots, backed by the repo's DOM and console checks.**
 
+**Skills:** load each with the Skill tool when its step or condition comes up. Its steps name `byte-stack:principle-guard-the-context-window`, `byte-stack:swarm`. Also load `byte-stack:principle-prove-it-works` when you judge the screenshots.
+
 Not established in bphs-connect: visual-regression or pixel-diff tooling, a committed baseline image set that a test compares against, who reviews the screenshots, or Vitest browser mode. Never report "pixel-exact" or "zero diff". Report what was compared and that the judgment was by eye.
 
 1. Learn the styling system before touching it:
@@ -14,7 +16,7 @@ Not established in bphs-connect: visual-regression or pixel-diff tooling, a comm
    - `node docs/verify/browser.mjs --out <folder> [--as priya|marcus|rosa] [--width <px>] <address>...` saves a full-page PNG per address, logged in, in headless Chrome on the UTC clock.
    - Cover both layouts `DESIGN.md` describes, which switch at 1024px: the desktop one at 1440, `browser.mjs`'s default width and the monitor `DESIGN.md` designs for, and the phone one below 1024 at a phone width such as 390. Add the widths the change itself touches. Save screenshots where git ignores them: `tmp/browser` is `browser.mjs`'s default folder, and `qa-shots/` holds local mocks, such as the one `DESIGN.md` cites (both are in `.gitignore`).
 3. Change one phase at a time, and compare each phase visually before its commit.
-4. Capture the after state with the same seed, clock, account, widths and addresses. Put before and after side by side and judge them by looking, at readable size. Pair the same route, content, width and account. The impeccable `SKILL.md` says to verify by looking at the rendered result at the sizes it ships at. It names no human reviewer. When there are more pairs than you can look at closely, such as several routes at both layouts, run the **swarm** helper with one worker per route. Each judges its pairs and reports `PASS`, or `ISSUES` with the screenshot paths. Look at every `ISSUES` pair yourself before you report it (**principle-guard-the-context-window**).
+4. Capture the after state with the same seed, clock, account, widths and addresses. Put before and after side by side and judge them by looking, at readable size. Pair the same route, content, width and account. The impeccable `SKILL.md` says to verify by looking at the rendered result at the sizes it ships at. It names no human reviewer. When there are more pairs than you can look at closely, such as several routes at both layouts, run the `byte-stack:swarm` helper with one worker per route. Each judges its pairs and reports `PASS`, or `ISSUES` with the screenshot paths. Look at every `ISSUES` pair yourself before you report it (`byte-stack:principle-guard-the-context-window`).
 5. Run the checks the repo does have:
    - `browser.mjs` already fails an address on a console error, page error, error or not-found page, or a page still loading after 10s.
    - `SKIP_BUILD=1 node docs/verify/routes-smoke.mjs` opens every route as several accounts and fails on errors, error boundaries, not-found or blank main regions.

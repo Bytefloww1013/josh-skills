@@ -9,7 +9,7 @@ disable-model-invocation: false
 
 Explore the codebase to answer "how does X work?" questions. Produce architectural explanations at the level of a senior engineer onboarding onto a subsystem, enough to build a working mental model, not so much that it reads like annotated source code.
 
-Every spawn is a Task subagent. Explorers use the `how explorer` line (default `claude-opus-5-5-high`), and every explainer uses the `how explainer` line (default `claude-opus-5-5-xhigh`). Pick each subagent's reasoning level for the job, per the Subagents section of the **bmode** skill.
+Every spawn is a Task subagent. Pick each subagent's model and reasoning level from bphs-connect's subagent policy, `docs/agents/sub-agent-choice.md`, by the role bmode's `references/subagents.md` (the **bmode** skill) gives explorers and explainers. Outside bphs-connect, or when the policy file is missing, use the Agent tool's default model.
 
 ## 1. Assess complexity
 

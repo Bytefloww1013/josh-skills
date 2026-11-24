@@ -1,20 +1,41 @@
-# Architect runner prompt
+# Architect planner prompt
 
-The orchestrator passes this file through to every parallel candidate runner during Phase B and fills in the variable inputs around it: the task, the Phase A grounding artifacts, the isolated working directory, and the path to write outputs. The working directory is a git worktree when available, otherwise a per-runner subdirectory under the sketch dir. What matters is independence between candidates.
+The orchestrator passes this file to each of the two planners in Phase 3. Around it, the orchestrator gives you:
 
-You are producing one candidate design in architect's parallel exploration. Read the **architect** skill in full first. That's the workflow you're inside. Output a candidate design package: type sketch, function signatures, module map, and prose rationale shaped per [`rationale-template.md`](rationale-template.md).
+- `brief.md`: the problem, constraints, callers, quality goals and grounding from Phase 1.
+- **Your direction:** the answer your plan commits to.
+- **The direction you are not taking:** the other planner's direction, named only so you don't drift toward it.
+- **Your output path:** `plan-a.md` or `plan-b.md`, and a sketch folder or worktree if you need one.
 
-Apply the following discipline. The orchestrator compares candidates on these axes to pick a base.
+## Your job
 
-- Caller's usage first. Write the README-style usage and two or three real call sites before the types, then derive the type sketch from them. The usage is the spec. The two must agree, so reconcile the sketch to the usage, not the reverse.
-- Data structures first. Get the core types right and the code becomes obvious. Trace each dominant access pattern through the proposed structure. If the answer is "we'll add a map / index / cache later," the structure is wrong.
-- Interface depth. Compare the capability hidden behind the public surface relative to the size of that surface. Prefer a simple interface that pulls complexity into the callee, even when the implementation becomes less simple. Do not put transport or wire types on the public API. Parse into domain types behind the interface.
-- Shared state: if two actors might both write, ask "what happens?" If the answer isn't "nothing," default to per-actor state with a merge at the read boundary, per the **separate-before-serializing-shared-state** principle skill.
-- Make boundaries visible. `not implemented` errors for bodies, `// TODO` pseudocode for tricky logic, doc comments stating intent and invariants. A reader should trace data from input to output by reading types and signatures alone.
-- Encode invariants in types: hard-to-misuse types > runtime checks > prose comments, per the **encode-lessons-in-structure** principle skill.
-- Validate at boundaries, trust types inside, per the **boundary-discipline** principle skill. Business logic as pure functions. The shell stays thin.
-- Single source of truth per invariant. Derive instead of sync.
-- Idempotent state transitions where applicable, per the **make-operations-idempotent** principle skill. Ask what happens if the operation runs twice or crashes halfway.
-- Short call chains. If tracing the flow needs more than three files, flatten the hierarchy, per the **laziness-protocol** and **minimize-reader-load** principle skills.
+Write one complete architectural plan that follows your direction. Use the sections and order in [plan-template.md](plan-template.md). An arch-skills reviewer will read your plan with no other context, and a decision review will compare it against the other plan. So make every claim checkable from the plan's own text, and state your reasons where a reviewer can quote them.
 
-You are one of the parallel runners, each on a different model. Produce the best design your model can make. Don't hedge against the others. Differences between candidates are the signal used to pick a base and graft. Converging on a safe-looking middle defeats the exploration.
+You are not writing the best compromise. Write the strongest plan your direction allows. If your direction can't meet a constraint in `brief.md`, say so under **Open questions and risks**. Don't quietly switch to the other direction. The difference between the two plans is what the review uses to choose.
+
+Don't read the other planner's output, even if you can reach it.
+
+## Discipline
+
+The reviewers judge plans on these points, so apply each one:
+
+- **Caller's usage first.** Write the README-style usage and two or three real call sites before the types, then derive the type sketch from them. When the two disagree, change the sketch to fit the usage, not the reverse.
+- **Data structures first.** Get the core types right and the code becomes obvious. Trace each main access pattern through the proposed structure. If the answer is "we'll add a map, index or cache later", the structure is wrong.
+- **Interface depth.** Compare the capability hidden behind the public surface with the size of that surface. Prefer a small, simple interface that pulls complexity into the module, even when the implementation becomes less simple. Keep transport and wire types off the public API: parse into domain types behind the interface.
+- **One owner per piece of state.** When two actors might both write, ask what happens. If the answer isn't "nothing", give each actor its own state and merge at the read boundary, per the **separate-before-serializing-shared-state** principle skill.
+- **Boundary crossings named.** List every place where data or calls cross a module, service or process boundary, with what crosses. Only names and types should cross. Say why if anything stronger does (shared meaning of values, call order, a shared algorithm).
+- **Visible boundaries in the sketch.** Use `not implemented` errors for bodies, `// TODO` pseudocode for tricky logic, and doc comments that state intent and invariants. A reader should trace data from input to output through the types and signatures alone.
+- **Invariants in types.** Prefer types that are hard to misuse over runtime checks, and runtime checks over prose comments, per the **encode-lessons-in-structure** principle skill.
+- **Validate at the boundary.** Parse outside data once at the edge and trust the types inside, per the **boundary-discipline** principle skill. Keep business logic in pure functions and the shell thin.
+- **One source of truth per invariant.** Derive rather than sync.
+- **Idempotent transitions.** Say what happens when an operation runs twice or crashes halfway, per the **make-operations-idempotent** principle skill.
+- **Short call chains.** If tracing a flow needs more than three files, flatten it, per the **laziness-protocol** and **minimize-reader-load** principle skills.
+- **No invented numbers.** Use only the quality goals in `brief.md`. Write `TBD (owner: ...)` for anything else.
+
+## Report
+
+Write the plan to your output path. Reply to the orchestrator with only:
+
+- the path to your plan and to any sketch files,
+- one sentence on the load-bearing decision your plan makes,
+- each constraint in `brief.md` your plan can't meet, or "none".

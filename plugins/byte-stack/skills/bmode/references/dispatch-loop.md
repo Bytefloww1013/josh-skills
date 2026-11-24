@@ -42,7 +42,7 @@ Save it as `<RUN_DIR>/report.md` and run `python3 -I <bmode>/references/briefs/c
 **Review gates (every `DONE` branch, before the push)**
 
 1. `arch-skills:pr-erosion-check` against `origin/main`, with the issue as the yardstick.
-2. Each review agent bmode's Review agents rule triggers, on the reviewer model the policy picks.
+2. Each review agent that bmode's Review agents trigger (`references/triggers.md`) names, on the reviewer model the policy picks.
 3. The reviewer brief, or under T3 the Sol review, which stands in for it.
 
 **After a reviewer**

@@ -2,6 +2,8 @@
 
 **Rehearse on Staging through `scripts/staging.sh`, run each `**Stop:**` step only on the operator's go-ahead for that step, and end with a result block.**
 
+**Skills:** load each with the Skill tool when its step or condition comes up. Also load `byte-stack:principle-prove-it-works` for the result block; `byte-stack:principle-make-operations-idempotent` before you repeat a step.
+
 Staging runs a committed ref on a production backup, on homelab, reached only over the tailnet (`docs/how-to/run-staging.md`). It is a full, unscrubbed copy of production, kept for rehearsing upgrades only (`docs/adr/0002-production-copy-as-staging.md`). That is the one exception to the real-backup rule, and the staging line in Autonomy (`SKILL.md`) holds what an agent may read of it.
 
 1. **Name what you rehearse.** The ref and the backup it starts from:
