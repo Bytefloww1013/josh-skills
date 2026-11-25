@@ -25,8 +25,8 @@ The byte-stack helper skills ship next to bmode, at `../<name>/SKILL.md` relativ
 | `byte-stack:gen-issue` | Skill tool | You file a GitHub issue ([triggers.md](triggers.md), "A GitHub issue"). |
 | `byte-stack:sol-loop` | Skill tool | Under T3, the Opening a PR playbook's Sol review ([t3-model-routing.md](t3-model-routing.md)). |
 | `byte-stack:in-your-own-words` | Skill tool | The first question round of a plan (Multi-phase plan, Feature), or a request that could be read more than one way. |
+| `byte-stack:sharpen` | Skill tool | A step names it to make a task deeper before you start. Pass `--deep` and no `--in` or `--out`, so it audits depth and returns the rewrite in chat. |
 | `byte-stack:swarm` | Read | A step names it for parallel workers. |
-| `byte-stack:sharpen` | Read | A step names it to make a task deeper before you start. |
 | `byte-stack:correct` | Read, or offer | A class of mistake has come up twice (`byte-stack:principle-encode-lessons-in-structure`). |
 
 Per-helper rules:
