@@ -1,6 +1,6 @@
 # arch-skills
 
-Four skills that help a coding agent keep a codebase sound. They share one library of principles (connascence, coupling metrics, erosion vectors, contracts, fitness functions, severity) and a project profile for bphs-connect.
+Six skills that help a coding agent keep a codebase sound. The first four share one library of principles (connascence, coupling metrics, erosion vectors, contracts, fitness functions, severity) and a project profile for bphs-connect.
 
 | Skill | Use it when |
 |---|---|
@@ -8,6 +8,8 @@ Four skills that help a coding agent keep a codebase sound. They share one libra
 | `arch-skills:pr-erosion-check` | A PR or branch is ready for review, or an agent says it is done. Output: merge verdict with file:line findings, including scope against the linked issue. |
 | `arch-skills:architecture-review-report` | You have a plan, spec, RFC or GitHub issues to review. Output: element-by-element report with severity and cited principle. |
 | `arch-skills:repo-navigability-audit` | You want to know how easily an agent or a new person finds their way in a repo. Output: scored audit with fixes. |
+| `arch-skills:state-machine-audit` | You want the implicit state machines in an app found, mapped and checked for paths to invalid states. Output: findings report with Mermaid diagrams. Read-only. |
+| `arch-skills:user-flow-mapper` | You want a user's journey for one task mapped. Output: Mermaid diagrams for approval, then mockups, a clickable prototype and a UX report. |
 
 Claude loads a skill by itself when the task fits its description. You can also call one by name, for example `/arch-skills:pr-erosion-check 41`.
 
@@ -30,4 +32,4 @@ The scripts need Python 3 (standard library only). `pr-erosion-check` uses `git`
 
 Edit the skills here, in `skills/<name>/`. There is no build step.
 
-Each skill carries its own copy of the reference files and scripts it shares with the others, so it works when installed alone. `severity.md`, `fitness-functions.md` and `project-bphs-connect.md` are in all four skills, and other files in two or three. When you change a shared file, change every copy, then run `plugins/arch-skills/check-copies.sh`. It names each file whose copies differ and exits 1 if any do.
+Each skill carries its own copy of the reference files and scripts it shares with the others, so it works when installed alone. `severity.md`, `fitness-functions.md` and `project-bphs-connect.md` are in all four review skills, and other files in two or three. `state-machine-audit` and `user-flow-mapper` share no files. When you change a shared file, change every copy, then run `plugins/arch-skills/check-copies.sh`. It names each file whose copies differ and exits 1 if any do.

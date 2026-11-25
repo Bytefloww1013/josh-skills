@@ -13,7 +13,7 @@
     {
       "name": "arch-skills",
       "source": "./plugins/arch-skills",
-      "description": "Architecture decision review, PR erosion check, architecture review report and repo navigability audit, with one shared principle library. Includes a reminder hook that suggests the PR check before gh pr create."
+      "description": "Architecture decision review, PR erosion check, architecture review report and repo navigability audit, with one shared principle library, plus a state machine audit and a user flow mapper. Includes a reminder hook that suggests the PR check before gh pr create."
     }
   ]
 }
