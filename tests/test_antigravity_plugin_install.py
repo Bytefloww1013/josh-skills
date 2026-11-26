@@ -201,8 +201,7 @@ def main():
             byte_entry.get("enabled") is True
             and byte_entry.get("version") == byte_agy_ver
             and byte_entry.get("agents") == ["byte-agent"]
-            and "bmode" in (byte_entry.get("skills") or [])
-            and "byte-handoff" in (byte_entry.get("skills") or [])
+            and set(byte_entry.get("skills") or []) == {p.parent.name for p in (byte_src / "skills").glob("*/SKILL.md")}
             and not byte_entry.get("hooks"),
             byte_entry,
         )

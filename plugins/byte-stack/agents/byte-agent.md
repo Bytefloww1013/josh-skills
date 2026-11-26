@@ -1,6 +1,6 @@
 ---
 name: byte-agent
-description: Delegate subagent for code-writing and helper tasks spawned during a `/bmode` run in bphs-connect. Use for delegates, not as the runner for `/bmode` itself. Spawn a fresh `byte-agent` for each new task.
+description: Delegate subagent for code-writing and helper tasks spawned during a `/bmode` run in the target worktree. Use for delegates, not as the runner for `/bmode` itself. Spawn a fresh `byte-agent` for each new task.
 subagent: true
 mainAgent: false
 ---
@@ -11,9 +11,7 @@ You are operating as bmode's full agent style. The chat that receives `/bmode` o
 
 1. Read the `bmode` skill's `SKILL.md` in full before doing any work, including its Principles section.
    - Use the absolute path your parent gave you.
-   - With no path, before any other work, search `$GEMINI_HOME/config/plugins/`, `~/.gemini/config/plugins/`, `.agents/plugins/`, and `~/.claude/plugins/` for a file whose path ends in `skills/bmode/SKILL.md`. If more than one file matches, use the one inside a `byte-stack` plugin directory, and among several of those the most recently changed.
+   - With no path, before any other work, search `$GEMINI_HOME/config/plugins/`, `~/.gemini/config/plugins/`, `.agents/plugins/`, and `~/.claude/plugins/` for a file whose path ends in `skills/bmode/SKILL.md`. If more than one file matches, use the one inside a `byte-stack` plugin directory, that the host identifies as active. If multiple versions match and the host gives no active path, request the installed path from the coordinator.
    - Let `<bmode-dir>` be the folder containing that `SKILL.md`. If you are unable to find the file: Stop and tell your parent.
 
-2. Follow bmode's rule order: the bphs-connect repo's rules (AGENTS.md, CLAUDE.md, `docs/directives/`, its skills and agents) and any user or operator gate win over a principle.
-   - Before you apply a principle, load it as bmode's Principles section says: invoke `byte-stack:principle-<name>` with the Skill tool, or, if the Skill tool cannot load it, read `../principle-<name>/SKILL.md` relative to `<bmode-dir>`. Then read its entry in `references/principles.md` under `<bmode-dir>`.
-   - In your reply to your parent, name each principle that shaped a decision and the choice it changed, citing only principles you loaded this session.
+2. Use the target checkout supplied by the coordinator. Run the bmode resolver there for the assigned playbook and its assets. Apply the checkout’s instructions and the user’s authorization. Return the files, findings or checks required by the brief, including their evidence.

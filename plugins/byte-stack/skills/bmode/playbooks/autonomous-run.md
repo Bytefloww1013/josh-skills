@@ -1,28 +1,5 @@
-### Autonomous run
+# Autonomous run
 
-**You own the exit condition. Run to it without asking, and stop only where the repo says a human decides.**
+Use when: Carry one authorized task through an observable exit condition.
 
-**Skills:** load each with the Skill tool when its step or condition comes up. Its steps name `byte-stack:principle-encode-lessons-in-structure`. Also load `byte-stack:principle-never-block-on-the-human` for each call inside the gates; `byte-stack:principle-sequence-verifiable-units` for each slice; `byte-stack:principle-prove-it-works` before you report the exit condition met.
-
-1. State the exit condition as checks that exit 0. The branch's `docs/verify/verify-done.sh` (git ignores it; copy it from the template) checks each Definition of Done item, every plan slice ticked, the issue notes block gone from `AGENTS.md`, the quick gate, and local `main` not ahead of `origin/main`. CI on the branch must pass too. For a `/byte-gh-issue-claim` run, Done is every Step 7 check passed (CI included), `check-plan` at 0 unchecked slices, `check-agentsmd ... clean` passing, and every manual item passed.
-2. For one issue, the user runs `/byte-gh-issue-claim <N> --auto`. It runs to an open PR without asking, because `--auto` is the user's say-so for that PR (`docs/directives/git-and-prs.md`). Each gate goes to a fresh Decision subagent. It reads the repo's directives and precedent and never picks a `one-way-door` option (hard to walk back, such as a data migration, deleting anything the run didn't make, pushing to or merging into `main`, or touching production or a backup). Print each reply verbatim under `### Decision: <gate>` and add one line per decision to the plan's Auto decisions. On `STOP` (every option is a one-way door), ask the user. `--auto --verify` also waits for the user to confirm each manual item.
-3. Each iteration works one slice. After each slice, run `bun run typecheck` and the touched test files (Sequence Work into Verifiable Units in `references/principles.md`). Tick the slice when its tests pass. At the end of a phase run `docs/verify/quick-check.sh` and commit the phase with a Conventional Commits subject. The claim skill runs its branch guard before every commit and push, and pushes only the issue's branch. After the last phase its Step 7 reruns the checks, and under `--auto` waits for the last CI run with `gh run watch <id> --exit-status`. A failure becomes a new slice, committed as its own phase, then Step 7 runs again.
-4. Fold discoveries in. A new command, test trick or repeated mistake is proposed as one line for the issue notes block. Under `--auto`, add it and say so. If a lint rule or script could catch the mistake, also name that check in the reply as a proposal for the user (`byte-stack:principle-encode-lessons-in-structure`). A change to the docs system itself goes in a PR of its own.
-5. Keep context across the run. The handoff-guard hook prints HANDOFF REQUIRED 35k tokens before the autocompact. Run `byte-handoff`, then carry on. The hook pastes the handoff back in after the compaction (`playbooks/pause-safely.md`, `playbooks/session-pickup.md`).
-6. Stop for the human where the repo requires it, even under `--auto`:
-   - Merging. Merge only when the user says to. A Decision subagent never stands in for that.
-   - A slice that would break a Guardrail. No decision can waive one.
-   - `gh auth status` failing.
-   - A step with a `**Stop:**` line. Run it only with the operator's go-ahead, given in that session for that step. Anything that touches production or a backup follows `docs/directives/production-safety.md`.
-   - Opening the PR. It needs the user's say-so, given case by case (`docs/directives/git-and-prs.md`). `--auto` on the claim skill is that say-so for its issue's PR. Anywhere else, wait for it. Pushing a branch needs none, unless the plan's own rules block says otherwise.
-   - A step only the human can perform (credentials, a third-party dashboard, a cutover). The `wizard` skill generates a bash script that walks the user through it. Do not run that script yourself.
-7. Never push to `main`. Never use a real backup or a copy of the live database. Use the seed or `docs/verify/scratch-server.sh`. Never read staging's database or its pulled backups except through the staging script.
-8. Outside the claim skill, once the exit condition holds and the user has said to push and open it, run **Opening a PR** (`playbooks/opening-a-pr.md`).
-
-**Larger goals.** A run across many tickets is a queue: Autopilot-full (`playbooks/autopilot-full.md`) or Orchestrate (`playbooks/orchestrate.md`). The user-invoked `implement` builds one ticket on the current branch, with `tdd` at agreed seams and `code-review` at the end. The user-invoked `wayfinder` plans work too big for one session as a map of decision tickets.
-
-Not established in bphs-connect: a skill that pursues a long-running goal across sessions, or a scheduled wake-up or heartbeat for a run. None of the hooks in `.claude/settings.json` is a schedule.
-
-**Reply:** the exit condition, the iterations run, what landed, each Auto decision, and the final state of every check. Lay out any call still waiting on the user as action items: one line per decision waiting on the user, naming what you need from them and the link to act on.
-
-Sources: AGENTS.md, docs/verify/verify-done.template.sh, docs/verify/quick-check.sh, docs/verify/scratch-server.sh, docs/directives/plans.md, docs/directives/git-and-prs.md, docs/directives/production-safety.md, .claude/skills/byte-gh-issue-claim/SKILL.md, docs/skills/byte-gh-issue-claim.md, .claude/hooks/handoff-guard.py, .claude/settings.json, .claude/skills/byte-handoff/SKILL.md, .claude/skills/implement/SKILL.md, .claude/skills/wayfinder/SKILL.md, .claude/skills/wizard/SKILL.md
+Record the acceptance condition, branch and authorization limits. Work in verifiable slices and rerun checks after each. Track changed assumptions and use a handoff if interrupted. Stop at completion or a concrete dependency requiring the user.

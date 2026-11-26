@@ -32,8 +32,7 @@ pasted back, in place of this session's 001459).
 State: ~/.claude/handoff-state/<session_id>.json. Escape hatch: delete it, or set HANDOFF_AT=0 to switch the guard off.
 The byte-stack plugin (Bytefloww1013/josh-skills) ships this file as hooks/handoff-guard.py, registered in its hooks/hooks.json,
 so every project that enables the plugin has the guard. A project may also commit a byte-identical copy at
-.claude/hooks/handoff-guard.py, registered in its .claude/settings.json (bphs-connect does: cloud sessions don't install
-plugins). The plugin's copy then does nothing in that project, so one guard runs. SKILL follows from where this file is.
+.claude/hooks/handoff-guard.py, registered in its .claude/settings.json. The plugin's copy then does nothing in that project, so one guard runs. SKILL follows from where this file is.
 """
 import json, math, os, re, subprocess, sys, time
 from datetime import datetime
@@ -46,7 +45,7 @@ from pathlib import Path
 #   with CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: min(floor((window - reserve) * pct / 100), window - reserve - 13000)
 # 335000 -> 302000 (handoff 267000); 150000 -> 117000 (82000); no setting on a 1M-default model -> ~967000 (932000).
 # The configured window comes from CLAUDE_CODE_AUTO_COMPACT_WINDOW, else the settings files (configured_window). A setting can't
-# raise the window above the model's, so a 335000 entry on a 200k model compacts at ~167k: model_window caps it.
+# raise the window above the model's, so a 335000 entry on a 200k model compacts at ~167k: the hard limit caps it.
 BUFFER = 13_000
 HANDOFF_MARGIN = 35_000  # room to write, check and save the handoff before the autocompact
 DEFER_GROWTH = 25_000  # put a compaction off only while the context stays within this of where the first block found it
@@ -106,18 +105,14 @@ def env_int(name, default=None):
     return int(value) if value.isdigit() else default
 
 
-def model_window(model):
-    """The context window the model runs with. Docs (code.claude.com/docs/en/model-config.md, Nov 14 2026): "Fable models,
-    Sonnet 5 and later, Haiku 5.5, and Opus 4.7 and later run with the 1M window by default"; Opus 4.6 and Sonnet 4.6 get 1M only
-    with [1m]; CLAUDE_CODE_DISABLE_1M_CONTEXT caps them at 200k. A future model family needs a line in the regex; until then it
-    gets the early 200k. (Claude Code assumes 1M for an unknown id since 2.1.323, so for such a model this is early: safe.)"""
-    if os.environ.get("CLAUDE_CODE_DISABLE_1M_CONTEXT", "").strip().lower() in ("1", "true", "yes"):
-        return 200_000
-    if "[1m]" in (model or "").lower():
-        return 1_000_000
-    if re.search(r"claude-(fable-|sonnet-([5-9]|\d\d)|haiku-(5-[5-9]|[6-9]|\d\d)|opus-(4-[7-9]|[5-9]|\d\d))", canonical(model)):
-        return 1_000_000
-    return env_int("CLAUDE_CODE_MAX_CONTEXT_TOKENS") or env_int("HANDOFF_WINDOW") or 200_000
+def known_window(model):
+    """Return the supplied hard limit, or None when the transcript does not identify it."""
+    limit = env_int("CLAUDE_CODE_MAX_CONTEXT_TOKENS") or env_int("HANDOFF_WINDOW")
+    if not limit and (model or "").lower().endswith("[1m]"):
+        limit = 1_000_000
+    if limit and os.environ.get("CLAUDE_CODE_DISABLE_1M_CONTEXT", "").strip().lower() in ("1", "true", "yes"):
+        return min(limit, 200_000)
+    return limit
 
 
 def configured_window(model, root):
@@ -158,7 +153,7 @@ def thresholds(model, root, ceiling=None):
     """(autocompact, handoff, window, source): the points in context tokens, and the window they came from. HANDOFF_AT overrides
     the handoff point. ceiling is the last auto compaction's preTokens in this transcript: a window the hook can't read (a
     --autocompact flag, --settings, a server-pushed window) shows up there, and min() only ever lowers the point."""
-    mw = model_window(model)
+    mw = known_window(model) or 200_000
     cw, source = configured_window(model, root)
     window = min(cw or mw, mw)  # Claude Code caps a setting at the model's window
     out = env_int("CLAUDE_CODE_MAX_OUTPUT_TOKENS")  # a bad value must not kill the guard
@@ -412,7 +407,8 @@ def main():
         autocompact = thresholds(model, root, ceiling)[0]
         done = state["status"] == "done" and state.get("handoff") and Path(state["handoff"]).exists()
         first = state.get("deferred_at", tokens)
-        room = model_window(model) - 23_000 - tokens >= HEADROOM  # no room at a model's full window: its autocompact is 10k below the hard limit
+        limit = known_window(model)
+        room = limit is not None and tokens > 0 and limit - 23_000 - tokens >= HEADROOM  # no room at a model's full window: its autocompact is 10k below the hard limit
         if (data.get("trigger") == "auto" and not done and os.environ.get("HANDOFF_DEFER", "1") != "0"
                 and state.get("defers", 0) < DEFER_MAX and tokens - first < DEFER_GROWTH and room):
             now = time.time()

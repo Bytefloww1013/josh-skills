@@ -1,20 +1,23 @@
 ---
 name: council-review
-description: Gets a scored review from a council of three models from three providers (Claude Opus 5.5, Gemini 4 Neon, GPT-6.2 Sol, with DeepSeek V4.1 Flash as the fallback seat) and repeats it after fixes until every seat is satisfied. Reviews code, UI screenshots, plans and design decisions. Use only when the user says "council" or asks for a council review. Never start it yourself.
+description: Review code, a plan, an architecture decision or a feature idea with an independent council and reconcile its evidence.
 ---
 
 # Council review
 
-A council is three reviewers from three providers who review the same thing independently. You are the coordinator. You build the packet, start the seats, check what they find, fix what holds up, and run the next round.
+Resolve this skill's named assets from the target worktree. For example, for `references/KEY`, use `.byte-stack/references/council-review/KEY` before the bundled `references/KEY`; use the same rule for workflows and scripts. With bmode installed, run `python3 "<bmode directory>/scripts/assets.py" --owner "<this skill directory>" resolve references KEY`. For a standalone install, use `git rev-parse --show-toplevel` and check the same paths with the host's file tools. Use the bundle outside Git. For a missing optional asset continue; report unreadable, empty or symlinked overrides. Accept only relative keys within the asset directory. Inspect scripts before authorized use.
 
-Only the user starts a council. It is extra insurance for when the user is not sure of the direction, so it costs three providers' quota for each round. Never start it yourself: not for every PR, not from a playbook step and not because a change looks risky. When a change looks like it needs one, you may suggest it in one line, and the user decides.
+
+A council is three independent reviewers who review the same thing independently. You are the coordinator. You build the packet, start the seats, check what they find, fix what holds up, and run the next round.
+
+Only the user starts a council. It is extra insurance for when the user is not sure of the direction, so it uses three reviewer sessions for each round. Never start it yourself: not for every PR, not from a playbook step and not because a change looks risky. When a change looks like it needs one, you may suggest it in one line, and the user decides.
 
 ## 1. Before the council
 
 - Address open PR comments, fix the issues you already know about and run the relevant checks first. Give the council the updated implementation. Do not hold back known fixes until the reviews return.
 - If the user wants to discard the implementation and explore new ideas, skip the fixes to code that is going away.
 - Name the yardstick: the issue, the plan or the user's request. Every seat reviews against it.
-- In a repo that has a profile in `references/` (`project-<repo>.md`), read it now. Its checks and criteria apply on top of this file, and the repo's own rules win over this skill.
+- Apply the optional repo asset `references/criteria.md` to the relevant packet.
 
 ## 2. Pick the kind and build the packet
 
@@ -29,36 +32,11 @@ One council reviews one thing. Pick its kind:
 | Feature idea | The problem, who it is for, the ideas so far and the limits (time, data, access, cost). |
 | Other implementation detail | The question, the code it touches (paths or SHAs) and the options. |
 
-For a UI change, take the screenshots before the council starts. DeepSeek cannot see images. When it fills a seat on a UI change, it reviews the code diff only, and the report marks that seat `code only`.
+For a UI change, provide screenshots only to reviewers whose host supports images. Mark other reviews as code-only.
 
 ## 3. Seats
 
-| Seat | Default | By 5-hour usage left | When the seat is down |
-| --- | --- | --- | --- |
-| Claude | Opus 5.5, High | - | DeepSeek |
-| Gemini | Gemini 4 Neon, High | 50% or more: Neon `high`. 20% to 49%: Neon `medium`. Under 20%: Hydrogen `high`. 0%: DeepSeek. | DeepSeek |
-| GPT | GPT-6.2 Sol, High | 50% or more: `reasoningEffort: high`. Under 50%: `medium`. 0%: DeepSeek. | DeepSeek |
-| Fallback | DeepSeek V4.1 Flash Free (`opencode/deepseek-v4.1-flash-free`), `variant: max` | - | - |
-
-- If the user names the council's members, use those. When a member the user named is down, report it and do not substitute. The fallback below is only for the default seats.
-- Take the model ids from `orchestrator_capabilities`. When the id in the table is no longer offered, that seat is down. Tell the user which ids are offered now, so the table can be updated.
-- Read the usage with `python3 -I <this skill>/scripts/provider-usage.py`, before round 1 and again before each later round. It prints a percent left for `codex` (5-hour window) and for each Antigravity account: `gemini` (`antigravity`) and `gemini:antigravity_2`, each the tighter of its 5-hour and weekly windows. The Gemini seat runs on whichever account has more usage left (on a tie, `antigravity`), re-picked before each round, and on the other account with the same model when that one hits a limit; it is down only when both are. When a row reads `unknown`, use the seat's default and rely on the fallback below.
-- A seat is down when its usage is 0%, when its provider or model is not offered, or when its delegate fails on a usage limit or cannot connect. Then that seat's round runs on DeepSeek, and the report says which seat fell back and why. Report any other failure to the user, and do not swap that seat.
-- These fallbacks are the user's standing instructions. Make no other substitution. If two or more seats are down in one round, tell the user that the council has lost provider diversity before you score that round.
-- Antigravity's usage-limit text (seen 23 Nov 2026): `Individual quota reached. Please upgrade your subscription to increase your limits. Resets in <h>h<m>m<s>s.` (HTTP 429). `⚠ Verification Required` (HTTP 403) means the user must verify that account: try the other account, and tell the user.
-- Images: Claude, Gemini and GPT read the PNG files. DeepSeek V4.1 Flash is treated as text only (see section 2).
-- Cost: a full Gemini review used about 6% of the Gemini 5-hour window in testing. Read the usage before each round, not once per run.
-
-How to start each seat:
-
-- **In T3 Code:** call `orchestrator_capabilities` once per thread. Start every seat with `delegate_task`, `mode: async`, `role: review`, `isolation: shared`, all in one message so they run in parallel. Use these targets:
-  - Claude: `claudeAgent`, `claude-opus-5-5`, `{effort: high}`. When the coordinator is itself Claude, use the native `Agent` tool instead (`model: opus`, effort high, `run_in_background: false`), as T3 asks for a same-provider child.
-  - Gemini: the Antigravity account with more usage left (`antigravity` or `antigravity_2`, as above), with the model and level from the table, in the shape capabilities lists: an id per level (`gemini-4-neon-high`), or the base id (`gemini-4-neon`) with `options: { thought_level: "high" }`.
-  - GPT: `codex`, `gpt-6.2-sol`, `{reasoningEffort: high|medium}`.
-  - DeepSeek: `opencode`, `opencode/deepseek-v4.1-flash-free`, `{variant: max}`.
-
-  Start a new `delegate_task` for every round, each with a new `clientRequestId`. Never send a round with `t3_thread_send`. Follow each delegate's `next`, and do not poll.
-- **Outside T3:** use the harness's own subagent tools. When a seat's provider cannot be reached, it falls back as above. If DeepSeek cannot be reached either, report the empty seat.
+Use independent reviewers for correctness, integration and maintainability. Respect requested members and the host's availability and delegation rules. Prefer different perspectives when available. Report empty seats and the actual coverage. Never silently replace a user-selected reviewer. Each reviewer receives the same packet in a fresh context and sees no other verdicts.
 
 ## 4. The brief
 
@@ -118,24 +96,4 @@ Reply formats:
 
 ## 8. Report
 
-When the work ends in a PR, put the results in the PR description. Place this section just before the model and harness line at the end:
-
-```markdown
-## Council review
-
-Rounds: 2
-
-| Seat | Model | Round 1 | Round 2 |
-| --- | --- | --- | --- |
-| Claude | Opus 5.5 (High) | 7/10 | 9/10 |
-| Gemini | Gemini 4 Neon (High) | 7/10 | 9/10 |
-| GPT | GPT-6.2 Sol (High) | 8/10 | 10/10 |
-
-Fallbacks: none.
-```
-
-- Each row names the model and effort that actually ran. When a seat changes between rounds (for example, Neon High to Hydrogen High, or to DeepSeek), write it in that round's cell.
-- When a seat gives no score, write `no score`. Never invent one.
-- If the PR is open, edit its description. Do not post a comment for this.
-- With no PR, put the same table in your final reply.
-- Under the table, in the reply only: the findings fixed, the ones you rejected and why, the questions for the user and the follow-up list.
+Report each seat's role, actual coverage and score per round. Include unresolved disagreements, accepted fixes and evidence for rejected findings. Include the result in a PR description only when authorized to update it.

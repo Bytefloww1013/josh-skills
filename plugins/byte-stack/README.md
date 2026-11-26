@@ -1,38 +1,64 @@
-# byte-stack
+# Byte Stack
 
-`bmode` for `bphs-connect`, its playbooks and principle skills, helper skills (`how`, `architect`, `blast-radius`, `figure-it-out`, `council-review`, `docs-add`, `docs-review`, `gen-issue`, `sharpen`, `sol-loop`, `technical-writing`, `typescript-best-practices`, `unslop`), the `byte-agent` delegate subagent, and `byte-handoff` with its Claude Code handoff-guard hook.
+Run **bmode** to route a task to an engineering playbook. The plugin also includes engineering principles, documentation and review helpers, and a session handoff skill. Git and Python 3.9+ are required for asset lookup and initialization. Repositories can use the bundled playbooks immediately.
 
 ## Install
 
-### Claude Code
+| Host | Install | Invoke |
+| --- | --- | --- |
+| Claude Code | `claude plugin marketplace add Bytefloww1013/josh-skills`, then `claude plugin install byte-stack@josh-skills` | `/byte-stack:bmode` and `/byte-stack:init` |
+| Antigravity CLI | `agy plugin install /path/to/josh-skills/plugins/byte-stack` | Select the installed bmode or init skill from `/skills`. |
+| Codex CLI | `codex plugin marketplace add /path/to/josh-skills`, then `codex plugin add byte-stack@josh-skills` | Select `$byte-stack:bmode` or `$byte-stack:init` from the skill picker. Codex also exposes init as the plugin's onboarding skill on supported clients. |
+| Individual skills | `npx skills add Bytefloww1013/josh-skills --skill bmode` | Select the installed skill. Add init separately to scaffold a checkout. |
 
+For a branch under development, use its absolute checkout path in either marketplace add command. Start or reload the host session after installation as required. In each target repository run init explicitly to create tracked placeholders for the four asset directories. Repeating init preserves user files. No installation or session hook scaffolds a repository.
+
+## Add a repository playbook
+
+After running init, create `.byte-stack/playbooks/release-notes.md`:
+
+```markdown
+# Release notes
+
+Use when: Prepare release notes for a tagged version.
+
+Identify the previous tag, read the intervening commits, and group user-visible changes by feature or fix. Cite the commits.
 ```
-claude plugin marketplace add Bytefloww1013/josh-skills
-claude plugin install byte-stack@josh-skills --scope user
+
+Ask bmode to run `release-notes.md`, or describe the task. Add `.byte-stack/playbooks/investigation.md` to replace the bundled investigation. A same-key override can inherit the bundled trigger. Give a new playbook its own `Use when: ` line for automatic routing.
+
+| Kind | Use |
+| --- | --- |
+| `playbooks/` | Task entry points with routing descriptions |
+| `workflows/` | Reusable procedures named by a step |
+| `references/` | Criteria, documentation and brief templates |
+| `scripts/` | Commands selected by an authorized step |
+
+Lookup uses the current worktree root, including in a subdirectory or linked worktree. A missing local key falls through to the installed skill. Without a Git checkout, lookup uses the bundle. An invalid local override produces a diagnostic. Asset discovery reads filenames and Markdown descriptions; selecting a script never runs it. Only use scripts from a trusted checkout and apply the normal host permissions.
+
+From the target checkout, inspect requests using the script in the **installed** bmode skill:
+
+```sh
+python3 "<bmode directory>/scripts/assets.py" list-playbooks
+python3 "<bmode directory>/scripts/assets.py" resolve playbooks investigation.md
+python3 "<bmode directory>/scripts/assets.py" resolve workflows pre-review.md
+python3 "<bmode directory>/scripts/assets.py" --owner "<docs-review directory>" resolve references criteria.md
 ```
 
-### Antigravity
+The final example checks `.byte-stack/references/docs-review/criteria.md`, then `references/criteria.md` in docs-review. Its criteria are optional. Bmode's own keys are unprefixed. New workflows, references and scripts become reachable when a playbook or skill names them. Host, user and checkout rules apply to every asset.
 
-```
-agy plugin install /path/to/josh-skills/plugins/byte-stack
-```
+## Host differences
 
-`byte-stack` ships `.claude-plugin/plugin.json` for Claude Code and `.antigravity-plugin/plugin.json` for Antigravity, so each harness loads the metadata and hooks it supports with no patching after the install. Only the Antigravity manifest has a `version`. Claude Code takes the version of a plugin without one from the commit, so every push to `main` is an update; a `version` in `.claude-plugin/plugin.json` would pin the plugin until the number changed. Bump the Antigravity `version` when a change should reach Antigravity installs.
+Claude Code loads the byte-agent delegate and its handoff guard. Antigravity exposes byte-agent for delegation. Codex skills use the host's available delegation mechanism and pass the worktree and installed skill path in the brief. All hosts can invoke byte-handoff manually. Automatic handoff uses Claude Code's transcript, compaction settings and hook response format and is registered only on that host.
 
-## Subagent (`byte-agent`)
+The guard uses the supplied context limit (`CLAUDE_CODE_MAX_CONTEXT_TOKENS` or `HANDOFF_WINDOW`), an explicit extended-context suffix, or a conservative 200,000-token estimate. It respects the host's extended-context opt-out and configured compaction threshold. Without window information it can notify early on large sessions and allows compaction to proceed. A checkout with its own registered guard continues to use that copy.
 
-`agents/byte-agent.md` sets `subagent: true` and `mainAgent: false` so Antigravity exposes it for background delegation without listing it as a primary session agent, while Claude Code ignores those extra frontmatter keys. It omits `tools:` so both harnesses inherit their own full toolset (a single `tools:` allowlist cannot name both Claude Code and Antigravity tools). When no parent path is passed, the prompt searches Antigravity (`$GEMINI_HOME/config/plugins/`, `~/.gemini/config/plugins/`, `.agents/plugins/`) and Claude Code (`~/.claude/plugins/`) plugin folders for `skills/bmode/SKILL.md`.
+The pre-push review skill is `review-loop`. Delegation inherits the host default or honors a supported user or repo selection. Council review can use independent reviewers on the same provider.
 
-## Handoff-guard hooks and harness support
+## Package maintenance
 
-- **Claude Code:** loads `hooks/hooks.json`, which wires `hooks/handoff-guard.py` to `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, and `PreCompact`.
-- **Antigravity:** registers no handoff-guard hooks. It reads plugin hooks only from a `hooks.json` at the plugin root, and byte-stack has none. `agy plugin validate --strict` warns that `hooks/hooks.json` is never loaded; that warning is expected.
-  - `PreCompact` and `UserPromptSubmit` are unsupported in Antigravity (those events do not exist).
-  - `SessionStart`, `PreToolUse`, and `PostToolUse` exist in Antigravity, but `hooks/handoff-guard.py` is unverified under Antigravity (it reads Claude Code JSONL transcripts, Claude autocompact settings, and snake_case hook payloads, and returns Claude Code `hookSpecificOutput` JSON), so none of those events are enabled on Antigravity.
+Claude Code derives the version from Git. Antigravity and Codex use explicit manifest versions. Keep the three skill sets in one source directory. Codex declares its own hook list to prevent discovery of the Claude Code hooks. See [Codex plugin packaging](https://developers.openai.com/plugins/build/plugins) and the [asset discovery decision](../../docs/adr/byte-stack-assets.md).
 
-The `byte-handoff` skill itself installs on both harnesses for manual handoffs.
+Run `python3 tests/test_byte_stack_distribution.py`, `python3 tests/test_byte_stack_assets.py`, `python3 plugins/byte-stack/hooks/check-handoff-guard.py`, and `python3 tests/test_antigravity_plugin_install.py` from the source checkout.
 
-## Tests
-
-- Handoff guard (Claude Code): `python3 plugins/byte-stack/hooks/check-handoff-guard.py`
-- Antigravity install smoke test (isolated `HOME` and config; requires `agy` on `PATH`, exits `2` when missing): `python3 tests/test_antigravity_plugin_install.py`
+For an opt-in end-to-end check, run `python3 tests/check_byte_stack_claude_live.py` with a signed-in Claude Code CLI. It uses four model turns, installs into a temporary profile, and verifies tool results for both playbook origins and two init runs.

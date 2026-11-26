@@ -10,7 +10,7 @@ When a large task matches no playbook, design one. The deliverable before any co
 ## Start
 
 1. **Load the rules you work under.** Under bmode, read the Principles section of bmode's `SKILL.md` if you haven't this session. Its repo rules and gates win over this skill. Outside bmode, follow the repo's AGENTS.md or CLAUDE.md.
-2. **Load each principle as you reach it.** This skill names principle skills by their Skill ID. Invoke each one with the Skill tool when its step comes up. If the Skill tool can't load it, Read `../principle-<name>/SKILL.md`.
+2. **Load each principle as you reach it.** This skill names principle skills by their Skill ID. Invoke each one with the Skill tool when its step comes up. Use the installed sibling’s SKILL.md when the host has no skill invocation tool. For a selective install, disclose any missing companion and proceed with the principles stated here.
 3. **Open a todolist** with the phases below as items.
 4. **Make the log.** Create `decision-log.md` in the run's working folder: the repo's git-ignored `tmp/` when it has one, otherwise the session scratchpad. Under bmode with a feature plan, the log lives in the plan's `## Decisions` instead.
 
@@ -30,7 +30,7 @@ Break the work into small units that each land on their own. Put the riskiest un
 
 - **Harness first.** Build the verification harness before the work, and capture the baseline from the state before the change, so each check reads "old value against new value".
 - **Design choices.** For a one-way-door design decision, run `byte-stack:architect`. It builds two plans and picks one with the arch-skills reviews. Skip it for mechanical work whose shape is already concrete. A second architect run over a settled design is over-engineering (`byte-stack:principle-laziness-protocol`).
-- **Fan-out.** Parallelize only across seams, and give each worker its own worktree or branch (`byte-stack:principle-separate-before-serializing-shared-state`). Don't over-fan. Pick each subagent's model and reasoning level by the repo's subagent policy. Under bmode, that is `references/subagents.md`.
+- **Fan-out.** Parallelize only across seams, and give each worker its own worktree or branch (`byte-stack:principle-separate-before-serializing-shared-state`). Don't over-fan. Pick each subagent's model and reasoning level by the repo's subagent policy. Otherwise inherit the host default.
 - **Write the phase list down.** That list is what the human reviews. Add it as the first entry in the decision log.
 
 Then run the design. Add its steps to the todolist as concrete items between the Phase C and Phase D entries. Run each under the Phase C loop, and add a log row as each step lands rather than saving the log for the end.
@@ -52,7 +52,7 @@ The log, together with the diff, is what lets the human come back and trust the 
 
 - Log every decision you made without asking, with its reason, so the human can correct it.
 - Log reverted steps too. A negative result is evidence.
-- For ambitious work, commit the log with the change so the reviewer reads it in the PR. Under bmode, the plan is never committed, so put what a reviewer needs from the log in the PR body.
+- For ambitious work, commit the log with the change so the reviewer reads it in the PR. If the repo ignores working plans, include the relevant decisions in the review handoff.
 
 ## Phase E: Verify and hand back
 

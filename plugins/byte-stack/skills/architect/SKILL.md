@@ -6,6 +6,9 @@ description: "Build two structurally different architectural plans for an idea o
 
 # Architect
 
+Resolve this skill's named assets from the target worktree. For example, for `references/KEY`, use `.byte-stack/references/architect/KEY` before the bundled `references/KEY`; use the same rule for workflows and scripts. With bmode installed, run `python3 "<bmode directory>/scripts/assets.py" --owner "<this skill directory>" resolve references KEY`. For a standalone install, use `git rev-parse --show-toplevel` and check the same paths with the host's file tools. Use the bundle outside Git. For a missing optional asset continue; report unreadable, empty or symlinked overrides. Accept only relative keys within the asset directory. Inspect scripts before authorized use.
+
+
 Design the work twice, then let an evidence-based review choose. Two planners each write one complete plan in a different direction. The arch-skills plugin reviews both and records the decision. The output is one chosen plan, revised against its review, with the losing plan and the reasons it lost kept beside it.
 
 ## Start
@@ -26,7 +29,7 @@ Make a run folder for this run's files. Use `tmp/architect/<slug>/` in the repo 
 
 Build a real model of every system the new work touches. Naming a file isn't grounding.
 
-1. Run the **how** skill (`../how/SKILL.md`) over each subsystem the work touches. Keep the architectural explanation it produces.
+1. Run the **how** skill (`../how/SKILL.md`) over each subsystem the work touches. Keep the architectural explanation it produces. If installed alone, trace the entry points, module boundaries, callers and invariants yourself and report the missing companion.
 2. If the design changes ownership or layering, also explain why the existing shape is the way it is, so that reason becomes a constraint rather than a guess.
 3. Read the repo's architecture doc (ARCHITECTURE.md, `docs/**/architecture.md`, AGENTS.md) and every ADR that covers the area.
 4. Write `brief.md` with these sections:
@@ -52,7 +55,7 @@ The two plans must differ in their whole shape, not in details inside one shape.
 Start two planner subagents in one message, so they run in parallel and neither sees the other's work.
 
 - **Brief.** Give each planner [references/planner-prompt.md](references/planner-prompt.md), `brief.md`, its own direction, and its output path: `plan-a.md` or `plan-b.md`. Pass the other direction as "the direction you are not taking", so the planner commits to its own.
-- **Models.** Pick each planner's model from bphs-connect's subagent policy, `docs/agents/sub-agent-choice.md`, as the Choosing models section of [references/review-and-pick.md](references/review-and-pick.md) says. Don't name a model in this skill.
+- Give each planner an independent brief and inherit the host selection unless a user or repository policy specifies one.
 - **Isolation.** If the planners write sketch files beyond their plan, give each its own git worktree or its own subfolder of the run folder.
 - **Shape.** Each plan follows [references/plan-template.md](references/plan-template.md). It must stand on its own as text, because the arch-skills reviewers read only the plan.
 

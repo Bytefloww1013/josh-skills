@@ -1,23 +1,5 @@
-### Shipping
+# Shipping
 
-**The owner lands PRs. Merge only on the user's word, squash only, then clean up the branch.**
+Use when: Land an approved change.
 
-**Skills:** load each with the Skill tool when its step or condition comes up. Its steps name `arch-skills:pr-erosion-check`, `byte-stack:docs-review`. Also load `byte-stack:principle-prove-it-works` to confirm the merge landed.
-
-1. **Confirm the ask.** Merge a PR only when the user says to. A Decision subagent never stands in for that, even under `--auto`. A green babysit is not that word.
-2. **Know who merges.** The owner's account merged every merged PR, release PRs included, and none had auto-merge set. The repo setting allows auto-merge, but nothing in the repo's files arms it or calls `gh pr merge`, and no workflow listens for a merge queue. Branch protection for `main` could not be read, the repo has no CODEOWNERS file, and no PR has a review. Without the user's word, report the PR merge-ready and hand it to the owner.
-3. **Check before it lands.** Every check passes on the current head (`gh pr checks <pr>`). The title is right, because it becomes the commit on `main` and decides the next version. As the coordinator of a queue run, have `arch-skills:pr-erosion-check`'s verdict for a delegate's PR at its current head, with no Critical or High finding open, before the merge (`references/helpers.md`, arch-skills). A `Sol hold:` line in the PR body blocks the merge while it is there; it goes only as `references/t3-model-routing.md` says (the user's word, or a later Sol approval of the current diff). For a PR that changes code a doc describes, run the `byte-stack:docs-review` skill as `pr` when the permission its first lines ask for is there, and offer it otherwise. It runs locally only, so its findings never block a merge.
-4. **Merge with a squash merge.** `docs/directives/git-and-prs.md` says PRs to `main` are squash-merged only. That is a convention, not a setting: the repo also allows merge commits and rebase merges. Merged PRs land as one single-parent commit; the few merge commits `git log --merges` shows are exceptions, not the practice. No PR is stacked, so there is no merge order or retarget to manage.
-5. **Confirm it landed.** Read the PR back with `gh pr view <pr>` and check that it reads merged.
-6. **Clean up.** `git switch main`, `git pull`, then `git branch -D <branch>`. `-D` is needed because a squash merge leaves the branch's commits off `main`. GitHub deletes the remote branch on merge (a repo setting), so this step is local only. A SHA for `.git-blame-ignore-revs` exists only after the merge, so it goes in a follow-up PR.
-7. **Expect the release PR.** The push to `main` runs `.github/workflows/release.yml`. After a `feat` or `fix` merge, release-please opens the release PR or updates the open one. A `refactor`, `docs`, `chore`, `test` or `ci` merge makes no release of its own. CI on that push runs scope `tested` when a green PR run already tested the tree.
-8. **Stop at the merge.** Nothing deploys on merge: the repo's workflows are CI, PR checks, Release and New module proof, and none touches the VPS. Production runs a tagged release. Upgrading it is a task of its own, the Upgrade production playbook (`playbooks/upgrade-production.md`).
-
-**Release PRs.** release-please makes every version after `1.0.0`, never a person. The release PR is titled `chore(main): release <version>` and holds only `package.json`'s version, `.release-please-manifest.json` and CHANGELOG.md. Do not add commits to it. Merging it tags the merge `v<version>` and makes the GitHub release. Its merge runs CI scope `text`. An upgrade needs it merged and tagged first (`playbooks/upgrade-production.md` step 1). The owner merged #215 and #229. Opening it needs the repo setting "Allow GitHub Actions to create and approve pull requests", or the Release run fails. Two discrepancies stand:
-
-- Branch name. `docs/directives/versioning.md` and `scripts/names-check.ts` name the release branch `release-please--branches--main--components--bphs-connect`, the branch real release PRs (#215, #229, #234) use, and `names:check` exempts only that exact name. No release PR has run it in CI yet.
-- CI. The release PR is opened with `GITHUB_TOKEN`, so its `CI` and `PR checks` runs wait at `action_required` and close as failed, with no jobs, once it merges. Merge it without them: it holds only release-please's files (`docs/directives/versioning.md`). A change to `package.json`'s `version` alone makes no doc stale, so `docs:stale` passes it (`docs/directives/git-and-prs.md`).
-
-**Reply:** what landed, who merged it and how you confirmed it, and whether a release PR opened or updated.
-
-Sources: docs/directives/git-and-prs.md, docs/directives/versioning.md, .claude/skills/byte-gh-issue-claim/SKILL.md, docs/skills/byte-stack.md, .github/workflows/release.yml, .github/workflows/super-linter.yml, .github/workflows/pr-checks.yml, scripts/names-check.ts
+Verify merge authorization, target branch, head, outstanding review and required checks. Follow the repository merge method. Confirm the resulting commit on the target branch. A release or deployment has its own approval and runbook.
