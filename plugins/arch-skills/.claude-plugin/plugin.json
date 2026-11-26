@@ -1,7 +1,7 @@
 {
   "name": "arch-skills",
   "displayName": "Architecture skills",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Six skills that keep agent-built code sound: decide a design choice, review a plan, check a PR for erosion and scope, audit how navigable a repo is, audit an app's implicit state machines, and map a user flow. Includes a reminder hook that suggests the PR check before gh pr create.",
   "author": { "name": "Joshua" },
   "license": "UNLICENSED",

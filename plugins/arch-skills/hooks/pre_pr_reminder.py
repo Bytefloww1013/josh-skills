@@ -2,12 +2,17 @@
 """PreToolUse hook: when the agent is about to run `gh pr create`, add a
 reminder to run pr-erosion-check first. It never blocks the command.
 
+Supports both Antigravity (`toolCall` / `hookEventName`) and Claude Code
+(`tool_input`) payloads, answering each in its own response format.
+
 The reminder is left out when every file the branch changes against the PR's
 base is a doc file (DOC_EXTENSIONS). The repo is the last `cd <dir>` in the
-command, else the hook's cwd; the base is `--base`/`-B`, else origin's
-default branch. If git can't answer, the reminder is shown.
+command, else the hook's cwd (or first workspacePath on Antigravity); the base
+is `--base`/`-B`, else origin's default branch. If git can't answer, the
+reminder is shown.
 
-Reads the hook JSON on stdin; prints one JSON object or nothing."""
+Reads the hook JSON on stdin; prints one JSON object (or nothing on Claude Code
+when no reminder applies)."""
 import json
 import os
 import shlex
@@ -72,15 +77,41 @@ def docs_only(cmd, cwd):
     return bool(files) and all(os.path.splitext(f)[1].lower() in DOC_EXTENSIONS for f in files)
 
 
+def extract_request(data):
+    """Returns (is_antigravity, cmd, cwd) from a Claude Code or Antigravity hook payload."""
+    is_antigravity = "toolCall" in data or "hookEventName" in data
+    if is_antigravity:
+        tool_call = data.get("toolCall")
+        args = tool_call.get("args") if isinstance(tool_call, dict) else None
+        args = args if isinstance(args, dict) else {}
+        cmd = str(args.get("CommandLine") or args.get("command") or "")
+        workspaces = data.get("workspacePaths")
+        first_ws = workspaces[0] if isinstance(workspaces, list) and workspaces else ""
+        cwd = str(args.get("Cwd") or data.get("cwd") or first_ws or os.getcwd())
+        return True, cmd, cwd
+    tool_input = data.get("tool_input")
+    tool_input = tool_input if isinstance(tool_input, dict) else {}
+    cmd = str(tool_input.get("command") or "")
+    cwd = str(data.get("cwd") or os.getcwd())
+    return False, cmd, cwd
+
+
 def main():
     try:
         data = json.load(sys.stdin)
     except ValueError:
         return
-    cmd = str((data.get("tool_input") or {}).get("command", ""))
-    if "gh pr create" not in cmd:
+    if not isinstance(data, dict):
         return
-    if docs_only(cmd, str(data.get("cwd") or os.getcwd())):
+    is_antigravity, cmd, cwd = extract_request(data)
+    remind = "gh pr create" in cmd and not docs_only(cmd, cwd)
+    if is_antigravity:
+        out = {"decision": "allow"}
+        if remind:
+            out["reason"] = REMINDER
+        print(json.dumps(out))
+        return
+    if not remind:
         return
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
