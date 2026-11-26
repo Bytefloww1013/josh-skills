@@ -5,7 +5,8 @@ Installs both plugins (`arch-skills` and `byte-stack`) with `agy plugin install`
 into a temporary isolated HOME/config, validates the installed trees with
 `agy plugin validate --strict`, checks agent metadata and hook registration, and
 invokes the installed `arch-skills` PR reminder hook for both Antigravity and
-Claude Code payloads on docs-only, code-change, rename, and unknown-base fixtures.
+Claude Code payloads on docs-only, code-change, rename, and unknown-base fixtures,
+and for Antigravity's PreInvocation delivery of a kept reminder.
 
 Usage:
   python3 tests/test_antigravity_plugin_install.py [--help]
@@ -169,6 +170,12 @@ def main():
                 plugins_by_name = {}
 
         arch_src_ver = json.loads((arch_src / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))["version"]
+        arch_agy_ver = json.loads((arch_src / ".antigravity-plugin" / "plugin.json").read_text(encoding="utf-8"))["version"]
+        check(
+            "arch-skills: the Claude Code and Antigravity manifests have the same version",
+            arch_src_ver == arch_agy_ver,
+            f"claude={arch_src_ver!r}, antigravity={arch_agy_ver!r}",
+        )
         byte_claude = json.loads((byte_src / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
         byte_agy_ver = json.loads((byte_src / ".antigravity-plugin" / "plugin.json").read_text(encoding="utf-8"))["version"]
         # Claude Code takes a plugin with no `version` from the commit, so each push is an update. A `version` there
@@ -204,10 +211,11 @@ def main():
         byte_dir = Path(byte_entry["path"]) if byte_entry.get("path") else Path(env["HOME"]) / ".gemini" / "config" / "plugins" / "byte-stack"
 
         # 3. Validate both installed directories with `agy plugin validate --strict --json`.
-        # byte-stack keeps its Claude Code hooks in `hooks/hooks.json`. Antigravity reads plugin hooks only from a
+        # Both plugins keep their Claude Code hooks in `hooks/hooks.json`. Antigravity reads plugin hooks only from a
         # `hooks.json` at the plugin root, so it loads none of them and warns about that file. That warning is the
-        # wanted result (the handoff guard is Claude Code only); any other warning or error fails.
-        expected_warnings = {"arch-skills": [], "byte-stack": ["hooks/hooks.json"]}
+        # wanted result: byte-stack's handoff guard is Claude Code only, and arch-skills ships its Antigravity hooks
+        # in its own root `hooks.json`. Any other warning or error fails.
+        expected_warnings = {"arch-skills": ["hooks/hooks.json"], "byte-stack": ["hooks/hooks.json"]}
         for name, installed_dir in (("arch-skills", arch_dir), ("byte-stack", byte_dir)):
             val = run_cmd([agy, "plugin", "validate", str(installed_dir), "--strict", "--json"], env=env)
             try:
@@ -227,13 +235,16 @@ def main():
         arch_hooks = json.loads(arch_hooks_path.read_text(encoding="utf-8")) if arch_hooks_path.is_file() else {}
         arch_group = arch_hooks.get("arch-skills") or {}
         pre_tool = arch_group.get("PreToolUse") or []
+        pre_invocation = arch_group.get("PreInvocation") or []
         arch_hook_script = arch_dir / "hooks" / "pre_pr_reminder.py"
         check(
-            "arch-skills registers only PreToolUse(run_command) pointing at ./hooks/pre_pr_reminder.py",
-            set(arch_group.keys()) == {"PreToolUse"}
+            "arch-skills registers only PreToolUse(run_command) and PreInvocation, both running ./hooks/pre_pr_reminder.py",
+            set(arch_group.keys()) == {"PreToolUse", "PreInvocation"}
             and len(pre_tool) == 1
             and pre_tool[0].get("matcher") == "run_command"
             and [shlex.split(h.get("command", "")) for h in pre_tool[0].get("hooks") or []]
+            == [["python3", "./hooks/pre_pr_reminder.py"]]
+            and [shlex.split(h.get("command", "")) for h in pre_invocation]
             == [["python3", "./hooks/pre_pr_reminder.py"]]
             and arch_hook_script.is_file(),
             arch_hooks,
@@ -295,10 +306,12 @@ def main():
         non_git = tmp / "fixtures" / "not-a-repo"
         non_git.mkdir(parents=True)
 
+        hook_env = {**env, "PLUGIN_DATA": str(tmp / "plugin_data" / "arch-skills")}
+
         def invoke_installed(payload):
             proc = run_cmd(
                 [sys.executable, str(arch_hook_script)],
-                env=env,
+                env=hook_env,
                 cwd=arch_dir,
                 stdin_text=json.dumps(payload),
             )
@@ -358,6 +371,22 @@ def main():
             parsed.get("decision") == "allow" and "pr-erosion-check" in parsed.get("reason", ""),
             raw,
         )
+
+        # Antigravity drops `reason` on an allowed call: with a conversationId the reminder is kept and the
+        # PreInvocation hook sends it once before the next model call.
+        kept_call = {**agy_payload("gh pr create --base main --title t", code_repo), "conversationId": "conv-smoke"}
+        raw = invoke_installed(kept_call)
+        check("installed hook (Antigravity, code branch, conversation): plain allow", json.loads(raw) == {"decision": "allow"}, raw)
+        model_call = {"hookEventName": "PreInvocation", "conversationId": "conv-smoke", "invocationNum": 2}
+        raw = invoke_installed(model_call)
+        steps = (json.loads(raw).get("injectSteps") or [{}]) if raw else [{}]
+        check(
+            "installed hook (Antigravity, PreInvocation): sends the kept reminder as a system message",
+            "pr-erosion-check" in ((steps[0].get("systemMessage") or {}).get("systemMessage") or ""),
+            raw,
+        )
+        raw = invoke_installed(model_call)
+        check("installed hook (Antigravity, PreInvocation again): empty answer", json.loads(raw) == {}, raw)
 
         # Claude Code payload checks
         raw = invoke_installed(claude_payload("git status", code_repo))
