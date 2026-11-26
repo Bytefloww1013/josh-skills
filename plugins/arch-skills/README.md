@@ -30,15 +30,20 @@ To try it without installing, from the josh-skills root: `claude --plugin-dir pl
 agy plugin install /path/to/josh-skills/plugins/arch-skills
 ```
 
-`agy` converts `.claude-plugin/plugin.json` and `hooks/hooks.json` on install (`Bash` -> `run_command`, `${CLAUDE_PLUGIN_ROOT}` -> `.`) with no post-install patching needed.
+The plugin installs on Antigravity as it is: `.antigravity-plugin/plugin.json` is its manifest and `hooks.json` at the plugin root holds its Antigravity hooks. Antigravity never loads `hooks/hooks.json` (Claude Code's hooks), and `agy plugin validate` warns about that file. Keep the version in `.claude-plugin/plugin.json` and `.antigravity-plugin/plugin.json` the same.
 
 The scripts need Python 3 (standard library only). `pr-erosion-check` uses `git` and, for PRs, `gh`.
 
 ## The hook
 
-`hooks/hooks.json` adds one `PreToolUse` hook (`hooks/pre_pr_reminder.py`). When the agent is about to run `gh pr create`, the hook adds a reminder to run `pr-erosion-check` first. It never blocks the command. It handles both Claude Code (`tool_input.command` -> `hookSpecificOutput.additionalContext`, empty stdout when skipped) and Antigravity (`toolCall.args.CommandLine` or `.command` -> `{"decision": "allow", "reason": ...}` when reminding, `{"decision": "allow"}` otherwise). In both harnesses it leaves the reminder out when every file the branch changes against the PR's base is a doc file (`.md`, `.mdx`, `.markdown`, `.txt`, `.rst`, `.adoc`), keeps the reminder on code-to-doc renames, and shows it whenever git can't tell.
+`hooks/pre_pr_reminder.py` reminds the agent to run `pr-erosion-check` when it is about to run `gh pr create`. It never blocks the command.
 
-To turn it off, delete `hooks/hooks.json` (or `hooks.json` in an Antigravity install), or disable the plugin's hooks in your settings.
+- Claude Code: `hooks/hooks.json` runs it as a `PreToolUse` hook. It answers with `hookSpecificOutput.additionalContext`, and with empty stdout when no reminder applies.
+- Antigravity: the root `hooks.json` runs it as a `PreToolUse(run_command)` hook and as a `PreInvocation` hook. Antigravity does not pass `reason` to the model when the decision is `allow`, so the `PreToolUse` call answers a plain `{"decision": "allow"}` and keeps the reminder in a file named after the conversation, under `$PLUGIN_DATA/pending-pr-reminders/` (the temp folder when `PLUGIN_DATA` is unset). Before the model's next call, the `PreInvocation` call sends it once as a system message and deletes the file; it also deletes kept reminders older than a day. When the reminder can't be kept (no `conversationId`, or the folder can't be written), the `PreToolUse` call answers `{"decision": "allow", "reason": ...}` instead.
+
+In both harnesses it leaves the reminder out when every file the branch changes against the PR's base is a doc file (`.md`, `.mdx`, `.markdown`, `.txt`, `.rst`, `.adoc`), keeps the reminder on code-to-doc renames, and shows it whenever git can't tell.
+
+To turn it off, delete `hooks/hooks.json` (Claude Code) or the root `hooks.json` (Antigravity), or disable the plugin's hooks in your settings.
 
 ## Tests
 

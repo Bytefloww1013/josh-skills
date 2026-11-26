@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -38,11 +39,12 @@ def make_branch(root, files):
     git(root, "commit", "-m", "change")
 
 
-def invoke(payload_text, proc_cwd=None):
+def invoke(payload_text, proc_cwd=None, env=None):
     out = subprocess.run(
         [sys.executable, str(SCRIPT)],
         input=payload_text,
         cwd=str(proc_cwd) if proc_cwd is not None else None,
+        env=env,
         capture_output=True,
         text=True,
         check=True,
@@ -222,6 +224,99 @@ class PrePrReminderTest(unittest.TestCase):
         self.assertEqual(invoke("not json"), "")
         self.assertEqual(invoke("[]"), "")
         self.assertEqual(invoke("null"), "")
+
+
+class AntigravityDeliveryTest(unittest.TestCase):
+    """Antigravity drops `reason` on an allowed tool call, so the reminder is kept for the conversation and sent as
+    a system message by the PreInvocation hook, before the model's next call."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.data = self.root / "plugin-data"
+        self.data.mkdir()
+        self.env = {**ENV, "PLUGIN_DATA": str(self.data)}
+        self.code_repo = self.root / "code"
+        make_branch(self.code_repo, ["src/app.py"])
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def pre_tool(self, command, cwd, conversation="conv-1", env=None):
+        payload = {
+            "hookEventName": "PreToolUse",
+            "conversationId": conversation,
+            "cwd": str(cwd),
+            "toolCall": {"id": "toolu_01", "name": "run_command", "args": {"CommandLine": command}},
+        }
+        return json.loads(invoke(json.dumps(payload), env=env or self.env))
+
+    def pre_invocation(self, conversation="conv-1", env=None, **extra):
+        payload = {"hookEventName": "PreInvocation", "invocationNum": 1, **extra}
+        if conversation is not None:
+            payload["conversationId"] = conversation
+        return json.loads(invoke(json.dumps(payload), env=env or self.env))
+
+    def assert_delivers_reminder(self, out):
+        steps = out.get("injectSteps") or []
+        self.assertEqual(len(steps), 1, out)
+        self.assertIn("pr-erosion-check", steps[0]["systemMessage"]["systemMessage"])
+
+    def test_reminder_reaches_the_next_model_call_once(self):
+        self.assertEqual(self.pre_tool("gh pr create --base main --title t", self.code_repo), {"decision": "allow"})
+        self.assert_delivers_reminder(self.pre_invocation())
+        self.assertEqual(self.pre_invocation(), {})
+
+    def test_another_conversation_gets_nothing(self):
+        self.pre_tool("gh pr create --base main --title t", self.code_repo, conversation="conv-1")
+        self.assertEqual(self.pre_invocation("conv-2"), {})
+        self.assert_delivers_reminder(self.pre_invocation("conv-1"))
+
+    def test_docs_only_branch_and_other_commands_keep_nothing(self):
+        docs_repo = self.root / "docs"
+        make_branch(docs_repo, ["docs/a.md"])
+        self.assertEqual(self.pre_tool("gh pr create --base main --title t", docs_repo), {"decision": "allow"})
+        self.assertEqual(self.pre_tool("git status", self.code_repo), {"decision": "allow"})
+        self.assertEqual(self.pre_invocation(), {})
+
+    def test_model_calls_with_nothing_kept_get_an_empty_answer(self):
+        self.assertEqual(self.pre_invocation(), {})
+        self.assertEqual(self.pre_invocation(conversation=None), {})
+        self.assertEqual(self.pre_invocation(conversation=12), {})
+
+    def test_conversation_id_stays_inside_the_plugin_data_folder(self):
+        self.pre_tool("gh pr create --base main --title t", self.code_repo, conversation="../../escape")
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["code", "plugin-data"])
+        self.assert_delivers_reminder(self.pre_invocation("../../escape"))
+
+    def test_reminders_older_than_a_day_are_dropped(self):
+        self.pre_tool("gh pr create --base main --title t", self.code_repo, conversation="old")
+        kept = [p for p in self.data.rglob("*") if p.is_file()]
+        self.assertEqual(len(kept), 1)
+        two_days_ago = time.time() - 2 * 24 * 3600
+        os.utime(kept[0], (two_days_ago, two_days_ago))
+        self.assertEqual(self.pre_invocation("new"), {})
+        self.assertFalse(kept[0].exists())
+        self.assertEqual(self.pre_invocation("old"), {})
+
+    def test_without_plugin_data_the_temp_folder_is_used(self):
+        tmpdir = self.root / "tmp"
+        tmpdir.mkdir()
+        env = {k: v for k, v in self.env.items() if k != "PLUGIN_DATA"}
+        env["TMPDIR"] = str(tmpdir)
+        self.assertEqual(self.pre_tool("gh pr create --base main --title t", self.code_repo, env=env), {"decision": "allow"})
+        self.assertTrue(any(p.is_file() for p in tmpdir.rglob("*")))
+        self.assert_delivers_reminder(self.pre_invocation(env=env))
+
+    def test_reminder_falls_back_to_reason_when_it_cannot_be_kept(self):
+        blocked = self.root / "not-a-folder"
+        blocked.write_text("x", encoding="utf-8")
+        env = {**self.env, "PLUGIN_DATA": str(blocked)}
+        out = self.pre_tool("gh pr create --base main --title t", self.code_repo, env=env)
+        self.assertEqual(out.get("decision"), "allow")
+        self.assertIn("pr-erosion-check", out.get("reason", ""))
+        out = self.pre_tool("gh pr create --base main --title t", self.code_repo, conversation=None)
+        self.assertIn("pr-erosion-check", out.get("reason", ""))
 
 
 if __name__ == "__main__":

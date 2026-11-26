@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: when the agent is about to run `gh pr create`, add a
-reminder to run pr-erosion-check first. It never blocks the command.
+"""PreToolUse hook (and, on Antigravity, PreInvocation hook): when the agent is
+about to run `gh pr create`, add a reminder to run pr-erosion-check first. It
+never blocks the command.
 
 Supports both Antigravity (`toolCall` / `hookEventName`) and Claude Code
 (`tool_input`) payloads, answering each in its own response format.
@@ -12,6 +13,15 @@ workspacePath on Antigravity); the base is `--base`/`-B`, else origin's
 default branch (origin/HEAD). If git can't answer, or the default branch is
 not known, the reminder is shown.
 
+Antigravity does not pass `reason` to the model when the decision is `allow`.
+So on Antigravity the PreToolUse call keeps the reminder in a file named after
+the conversation, under $PLUGIN_DATA (else the temp folder), and answers a
+plain allow. The plugin's PreInvocation hook runs this script before each model
+call: it sends a kept reminder once as a system message and deletes it, and
+drops reminders older than a day. When the reminder cannot be kept (no
+conversationId, or the folder cannot be written), PreToolUse answers with
+`reason` as before.
+
 Reads the hook JSON on stdin; prints one JSON object (or nothing on Claude Code
 when no reminder applies)."""
 import json
@@ -20,6 +30,8 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
+import time
 
 PR_CREATE = re.compile(r"\bgh\s+pr\s+create\b")
 DOC_EXTENSIONS = {".md", ".mdx", ".markdown", ".txt", ".rst", ".adoc"}
@@ -29,6 +41,7 @@ REMINDER = (
     "branch in this session, run it now with the linked issue as the yardstick, fix Critical and "
     "High findings, and include its verdict in your report. If you already ran it, go on. "
     "Skip it for a PR that only changes docs or makes text-only edits to non-code files.")
+KEPT_FOR = 24 * 3600  # seconds a kept Antigravity reminder waits for its conversation's next model call
 
 
 def git(repo, *args):
@@ -89,6 +102,59 @@ def docs_only(cmd, cwd):
     return bool(files) and all(os.path.splitext(f)[1].lower() in DOC_EXTENSIONS for f in files)
 
 
+def pending_dir():
+    base = os.environ.get("PLUGIN_DATA") or os.path.join(
+        tempfile.gettempdir(), f"arch-skills-{getattr(os, 'getuid', lambda: 'user')()}")
+    return os.path.join(base, "pending-pr-reminders")
+
+
+def pending_path(data):
+    """The file that keeps a reminder for this conversation, or None when the payload names no conversation."""
+    conversation = data.get("conversationId")
+    if not isinstance(conversation, str) or not conversation:
+        return None
+    return os.path.join(pending_dir(), re.sub(r"[^A-Za-z0-9_-]", "_", conversation)[:128])
+
+
+def keep_reminder(data):
+    """Keeps the reminder for the conversation's next model call. Returns False when it can't."""
+    path = pending_path(data)
+    if path is None:
+        return False
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8"):
+            pass
+    except OSError:
+        return False
+    return True
+
+
+def take_reminder(data):
+    """True once for a kept reminder; drops reminders older than KEPT_FOR."""
+    folder = pending_dir()
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return False
+    now = time.time()
+    for name in names:
+        try:
+            old = os.path.join(folder, name)
+            if now - os.path.getmtime(old) > KEPT_FOR:
+                os.remove(old)
+        except OSError:
+            pass
+    path = pending_path(data)
+    if path is None:
+        return False
+    try:
+        os.remove(path)
+    except OSError:
+        return False
+    return True
+
+
 def extract_request(data):
     """Returns (is_antigravity, cmd, cwd) from a Claude Code or Antigravity hook payload."""
     is_antigravity = "toolCall" in data or "hookEventName" in data
@@ -115,11 +181,17 @@ def main():
         return
     if not isinstance(data, dict):
         return
+    if data.get("hookEventName") == "PreInvocation":
+        out = {}
+        if take_reminder(data):
+            out = {"injectSteps": [{"systemMessage": {"systemMessage": REMINDER}}]}
+        print(json.dumps(out))
+        return
     is_antigravity, cmd, cwd = extract_request(data)
     remind = bool(PR_CREATE.search(cmd)) and not docs_only(cmd, cwd)
     if is_antigravity:
         out = {"decision": "allow"}
-        if remind:
+        if remind and not keep_reminder(data):
             out["reason"] = REMINDER
         print(json.dumps(out))
         return
