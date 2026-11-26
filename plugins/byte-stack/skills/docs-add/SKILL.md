@@ -1,6 +1,6 @@
 ---
 name: docs-add
-description: Add a doc to bphs-connect's docs system - a how-to, directive or reference in docs/, or the doc for a skill in .claude/skills/ - in the right folder, with its header, after checking the repo doesn't already cover it. Use when a procedure, rule, fact or skill has no doc yet.
+description: Add a doc to this repo's docs system - a how-to, directive or reference in docs/, or the doc for a skill in .claude/skills/ - in the right folder, with its header, after checking the repo doesn't already cover it. Use when a procedure, rule, fact or skill has no doc yet.
 argument-hint: "how-to <topic> | directive <topic> | reference <topic> | skill <name> [--repo <owner/name>] [--install \"<command>\"]"
 disable-model-invocation: false
 ---
