@@ -15,6 +15,8 @@ Claude loads a skill by itself when the task fits its description. You can also 
 
 ## Install
 
+### Claude Code
+
 ```
 claude plugin marketplace add Bytefloww1013/josh-skills
 claude plugin install arch-skills@josh-skills
@@ -22,11 +24,28 @@ claude plugin install arch-skills@josh-skills
 
 To try it without installing, from the josh-skills root: `claude --plugin-dir plugins/arch-skills`.
 
+### Antigravity
+
+```
+agy plugin install /path/to/josh-skills/plugins/arch-skills
+```
+
+`agy` converts `.claude-plugin/plugin.json` and `hooks/hooks.json` on install (`Bash` -> `run_command`, `${CLAUDE_PLUGIN_ROOT}` -> `.`) with no post-install patching needed.
+
 The scripts need Python 3 (standard library only). `pr-erosion-check` uses `git` and, for PRs, `gh`.
 
 ## The hook
 
-`hooks/hooks.json` adds one PreToolUse hook. When Claude is about to run `gh pr create`, the hook adds a reminder to run `pr-erosion-check` first. It never blocks the command. It leaves the reminder out when every file the branch changes against the PR's base is a doc file (`.md`, `.mdx`, `.markdown`, `.txt`, `.rst`, `.adoc`), and shows it whenever git can't tell. Run its tests with `python3 hooks/test_pre_pr_reminder.py`. To turn it off, delete `hooks/hooks.json`, or disable the plugin's hooks in your settings.
+`hooks/hooks.json` adds one `PreToolUse` hook (`hooks/pre_pr_reminder.py`). When the agent is about to run `gh pr create`, the hook adds a reminder to run `pr-erosion-check` first. It never blocks the command. It handles both Claude Code (`tool_input.command` -> `hookSpecificOutput.additionalContext`, empty stdout when skipped) and Antigravity (`toolCall.args.CommandLine` or `.command` -> `{"decision": "allow", "reason": ...}` when reminding, `{"decision": "allow"}` otherwise). In both harnesses it leaves the reminder out when every file the branch changes against the PR's base is a doc file (`.md`, `.mdx`, `.markdown`, `.txt`, `.rst`, `.adoc`), keeps the reminder on code-to-doc renames, and shows it whenever git can't tell.
+
+To turn it off, delete `hooks/hooks.json` (or `hooks.json` in an Antigravity install), or disable the plugin's hooks in your settings.
+
+## Tests
+
+- PR reminder hook (Claude Code and Antigravity payloads): `python3 plugins/arch-skills/hooks/test_pre_pr_reminder.py`
+- Erosion scan scripts: `python3 plugins/arch-skills/skills/pr-erosion-check/scripts/test_erosion_scan.py`
+- Shared reference copies: `plugins/arch-skills/check-copies.sh`
+- Antigravity install smoke test (isolated `HOME` and config; requires `agy` on `PATH`, exits `2` when missing): `python3 tests/test_antigravity_plugin_install.py`
 
 ## Editing
 

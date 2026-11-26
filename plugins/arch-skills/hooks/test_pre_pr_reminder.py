@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for pre_pr_reminder.py. Standard library only."""
+"""Tests for pre_pr_reminder.py (Claude Code and Antigravity payloads). Standard library only."""
 import json
 import os
 import subprocess
@@ -38,10 +38,37 @@ def make_branch(root, files):
     git(root, "commit", "-m", "change")
 
 
-def run(command, cwd):
-    payload = json.dumps({"tool_input": {"command": command}, "cwd": str(cwd)})
-    out = subprocess.run([sys.executable, str(SCRIPT)], input=payload, capture_output=True, text=True, check=True)
+def invoke(payload_text, proc_cwd=None):
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT)],
+        input=payload_text,
+        cwd=str(proc_cwd) if proc_cwd is not None else None,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     return out.stdout.strip()
+
+
+def run_claude(command, cwd):
+    payload = json.dumps({"tool_input": {"command": command}, "cwd": str(cwd)})
+    return invoke(payload)
+
+
+def run_antigravity(command, cwd=None, *, arg_key="CommandLine", workspace_paths=None, proc_cwd=None):
+    payload = {
+        "hookEventName": "PreToolUse",
+        "toolCall": {
+            "id": "toolu_01",
+            "name": "run_command",
+            "args": {arg_key: command},
+        },
+    }
+    if cwd is not None:
+        payload["cwd"] = str(cwd)
+    if workspace_paths is not None:
+        payload["workspacePaths"] = [str(p) for p in workspace_paths]
+    return invoke(json.dumps(payload), proc_cwd=proc_cwd)
 
 
 class PrePrReminderTest(unittest.TestCase):
@@ -52,18 +79,47 @@ class PrePrReminderTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_other_commands_get_nothing(self):
-        self.assertEqual(run("gh pr list", self.root), "")
+    def assert_skipped(self, harness, raw):
+        if harness == "claude":
+            self.assertEqual(raw, "")
+        else:
+            parsed = json.loads(raw)
+            self.assertEqual(parsed, {"decision": "allow"})
+
+    def assert_reminded(self, harness, raw):
+        parsed = json.loads(raw)
+        if harness == "claude":
+            hook_out = parsed.get("hookSpecificOutput") or {}
+            self.assertEqual(hook_out.get("hookEventName"), "PreToolUse")
+            self.assertIn("pr-erosion-check", hook_out.get("additionalContext", ""))
+        else:
+            self.assertEqual(parsed.get("decision"), "allow")
+            self.assertIn("pr-erosion-check", parsed.get("reason", ""))
+
+    def run_for_both(self, command, cwd):
+        return (
+            ("claude", run_claude(command, cwd)),
+            ("antigravity", run_antigravity(command, cwd)),
+        )
+
+    def test_other_commands_get_no_reminder(self):
+        for harness, raw in self.run_for_both("gh pr list", self.root):
+            with self.subTest(harness=harness):
+                self.assert_skipped(harness, raw)
 
     def test_docs_only_branch_skips_reminder(self):
         repo = self.root / "repo"
         make_branch(repo, ["GLOSSARY.md", "docs/guide.mdx", "notes.txt"])
-        self.assertEqual(run("gh pr create --base main --title t --body b", repo), "")
+        for harness, raw in self.run_for_both("gh pr create --base main --title t --body b", repo):
+            with self.subTest(harness=harness):
+                self.assert_skipped(harness, raw)
 
     def test_code_change_gets_reminder(self):
         repo = self.root / "repo"
         make_branch(repo, ["GLOSSARY.md", "src/app.py"])
-        self.assertIn("pr-erosion-check", run("gh pr create --title t --body b", repo))
+        for harness, raw in self.run_for_both("gh pr create --title t --body b", repo):
+            with self.subTest(harness=harness):
+                self.assert_reminded(harness, raw)
 
     def test_code_renamed_to_doc_gets_reminder(self):
         repo = self.root / "repo"
@@ -71,20 +127,55 @@ class PrePrReminderTest(unittest.TestCase):
         git(repo, "branch", "before-rename")
         git(repo, "mv", "app.py", "app.md")
         git(repo, "commit", "-m", "rename")
-        self.assertIn("pr-erosion-check", run("gh pr create --base before-rename", repo))
+        for harness, raw in self.run_for_both("gh pr create --base before-rename", repo):
+            with self.subTest(harness=harness):
+                self.assert_reminded(harness, raw)
 
     def test_cd_in_command_picks_the_repo(self):
         repo = self.root / "repo"
         make_branch(repo, ["docs/a.md"])
         other = self.root / "elsewhere"
         other.mkdir()
-        self.assertEqual(run(f"cd {repo} && gh pr create --base main --title t", other), "")
+        for harness, raw in self.run_for_both(f"cd {repo} && gh pr create --base main --title t", other):
+            with self.subTest(harness=harness):
+                self.assert_skipped(harness, raw)
 
     def test_unknown_repo_or_base_gets_reminder(self):
-        self.assertIn("pr-erosion-check", run("gh pr create --title t", self.root))
+        for harness, raw in self.run_for_both("gh pr create --title t", self.root):
+            with self.subTest(case="non-git", harness=harness):
+                self.assert_reminded(harness, raw)
         repo = self.root / "repo"
         make_branch(repo, ["docs/a.md"])
-        self.assertIn("pr-erosion-check", run("gh pr create --base nope --title t", repo))
+        for harness, raw in self.run_for_both("gh pr create --base nope --title t", repo):
+            with self.subTest(case="unknown-base", harness=harness):
+                self.assert_reminded(harness, raw)
+
+    def test_antigravity_lowercase_command_arg(self):
+        docs_repo = self.root / "docs-repo"
+        make_branch(docs_repo, ["docs/guide.md"])
+        self.assert_skipped("antigravity", run_antigravity("gh pr create --base main", docs_repo, arg_key="command"))
+
+        code_repo = self.root / "code-repo"
+        make_branch(code_repo, ["src/main.py"])
+        self.assert_reminded("antigravity", run_antigravity("gh pr create --base main", code_repo, arg_key="command"))
+
+    def test_antigravity_workspace_paths_fallback_when_cwd_omitted(self):
+        docs_repo = self.root / "ws-docs"
+        make_branch(docs_repo, ["docs/guide.md"])
+        other = self.root / "plugin-dir"
+        other.mkdir()
+        raw = run_antigravity("gh pr create --base main", cwd=None, workspace_paths=[docs_repo], proc_cwd=other)
+        self.assert_skipped("antigravity", raw)
+
+        code_repo = self.root / "ws-code"
+        make_branch(code_repo, ["src/app.py"])
+        raw = run_antigravity("gh pr create --base main", cwd=None, workspace_paths=[code_repo], proc_cwd=other)
+        self.assert_reminded("antigravity", raw)
+
+    def test_malformed_or_non_object_json_outputs_nothing(self):
+        self.assertEqual(invoke("not json"), "")
+        self.assertEqual(invoke("[]"), "")
+        self.assertEqual(invoke("null"), "")
 
 
 if __name__ == "__main__":
