@@ -1,6 +1,6 @@
 ---
 name: pr-erosion-check
-description: Checks a pull request, branch or diff for architecture erosion and for the shortcuts coding agents take, and returns a merge verdict with file:line findings. Catches boundary bypasses, new dependency cycles, wrong-direction imports, copied logic, complexity added to hotspots, files that usually change together but were left out, broken API or schema contracts, violated ADRs, weakened or skipped tests, swallowed errors, single-use abstractions, lint suppressions and changes that go beyond the linked issue. Use whenever asked to review a PR or diff, "check this branch before merge", "did the agent break anything", "is this safe to merge"; after a coding agent finishes a task and before it reports done; and before merging agent-written code. Do not use for design choices not yet built (use architecture-decision-review), repo layout (use repo-navigability-audit), or written plans and specs (use architecture-review-report).
+description: Checks a PR, branch or diff for architecture erosion, agent shortcuts and scope beyond the linked issue, and returns a merge verdict with file:line findings. Use to review a PR or diff, before a merge, and before a coding agent reports done.
 ---
 
 # PR Erosion Check

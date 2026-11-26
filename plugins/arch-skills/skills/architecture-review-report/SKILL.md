@@ -1,6 +1,6 @@
 ---
 name: architecture-review-report
-description: Reviews the architecture or design described in text and writes an evidence-based report. Use when asked to review, audit or critique a plan (full or partial), a detailed idea, a spec, an RFC, a design doc, or a set of GitHub issues, for example "review this spec", "what's wrong with this plan", "audit the design in issues 40 to 45", "is this RFC sound". Every finding quotes the text it rests on and gives a severity, an impact, a suggestion and the principle it applies, with gaps listed as open questions. Do not use for a single design choice the user wants decided (use architecture-decision-review), for code or a diff (use pr-erosion-check), or for repo layout (use repo-navigability-audit).
+description: "Reviews the architecture in a written plan, spec, RFC, design doc or set of GitHub issues and writes an evidence-based report: each finding quotes its text and gives a severity, an impact and a suggestion. Use for \"review this spec\" or \"what's wrong with this plan\"."
 ---
 
 # Architecture Review Report

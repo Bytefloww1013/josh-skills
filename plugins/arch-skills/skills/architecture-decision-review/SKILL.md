@@ -1,6 +1,6 @@
 ---
 name: architecture-decision-review
-description: Reviews a software design choice before it is built and returns a decision record (ADR) with a reversibility call, a connascence table and fitness functions. Use whenever you or the user is about to choose between design options or asks "should we", "which approach", "how should I structure", "is this a good design", "monolith or service", "where should this live"; whenever a plan adds, splits or moves a module, service, package boundary, dependency, data model, schema, public API, event or third-party library; and before a coding agent commits to a design it will build on. Has a two-minute quick mode for easy-to-undo choices. Do not use to review a finished diff (use pr-erosion-check), to audit repo layout (use repo-navigability-audit), or to review a whole written plan, spec or RFC (use architecture-review-report).
+description: Reviews a design choice before it is built and returns an ADR with a reversibility call, a connascence table and fitness functions. Use when choosing between design options, or before a plan adds, splits or moves a module, dependency, schema or public API.
 ---
 
 # Architecture Decision Review
