@@ -26,7 +26,7 @@ The scripts need Python 3 (standard library only). `pr-erosion-check` uses `git`
 
 ## The hook
 
-`hooks/hooks.json` adds one PreToolUse hook. When Claude is about to run `gh pr create`, the hook adds a reminder to run `pr-erosion-check` first. It never blocks the command. To turn it off, delete `hooks/hooks.json`, or disable the plugin's hooks in your settings.
+`hooks/hooks.json` adds one PreToolUse hook. When Claude is about to run `gh pr create`, the hook adds a reminder to run `pr-erosion-check` first. It never blocks the command. It leaves the reminder out when every file the branch changes against the PR's base is a doc file (`.md`, `.mdx`, `.markdown`, `.txt`, `.rst`, `.adoc`), and shows it whenever git can't tell. Run its tests with `python3 hooks/test_pre_pr_reminder.py`. To turn it off, delete `hooks/hooks.json`, or disable the plugin's hooks in your settings.
 
 ## Editing
 
