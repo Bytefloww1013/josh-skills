@@ -172,6 +172,52 @@ class PrePrReminderTest(unittest.TestCase):
         raw = run_antigravity("gh pr create --base main", cwd=None, workspace_paths=[code_repo], proc_cwd=other)
         self.assert_reminded("antigravity", raw)
 
+    def test_extra_spaces_in_the_command_still_get_the_reminder(self):
+        repo = self.root / "repo"
+        make_branch(repo, ["src/app.py"])
+        for harness, raw in self.run_for_both("gh  pr   create --base main --title t", repo):
+            with self.subTest(harness=harness):
+                self.assert_reminded(harness, raw)
+
+    def test_cd_as_an_option_value_is_not_a_directory_change(self):
+        repo = self.root / "repo"
+        make_branch(repo, ["docs/a.md"])
+        for harness, raw in self.run_for_both("gh pr create --base main --title cd --body example", repo):
+            with self.subTest(harness=harness):
+                self.assert_skipped(harness, raw)
+
+    def test_cd_before_a_semicolon_picks_the_repo(self):
+        repo = self.root / "repo"
+        make_branch(repo, ["docs/a.md"])
+        other = self.root / "elsewhere"
+        other.mkdir()
+        for harness, raw in self.run_for_both(f"cd {repo}; gh pr create --base main --title t", other):
+            with self.subTest(harness=harness):
+                self.assert_skipped(harness, raw)
+
+    def test_unknown_default_branch_gets_reminder(self):
+        # No --base and no origin/HEAD: the default branch is not known, so local `main` is not taken for it.
+        repo = self.root / "repo"
+        make_branch(repo, ["docs/a.md"])
+        for harness, raw in self.run_for_both("gh pr create --title t", repo):
+            with self.subTest(harness=harness):
+                self.assert_reminded(harness, raw)
+
+    def test_default_branch_comes_from_origin_head(self):
+        repo = self.root / "repo"
+        make_branch(repo, ["docs/a.md"])
+        git(repo, "update-ref", "refs/remotes/origin/main", "main")
+        git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+        for harness, raw in self.run_for_both("gh pr create --title t", repo):
+            with self.subTest(harness=harness):
+                self.assert_skipped(harness, raw)
+
+    def test_nul_byte_in_the_folder_still_answers(self):
+        payload = {"toolCall": {"args": {"CommandLine": "gh pr create", "Cwd": "\u0000"}}}
+        self.assert_reminded("antigravity", invoke(json.dumps(payload)))
+        payload = {"tool_input": {"command": "gh pr create"}, "cwd": "\u0000"}
+        self.assert_reminded("claude", invoke(json.dumps(payload)))
+
     def test_malformed_or_non_object_json_outputs_nothing(self):
         self.assertEqual(invoke("not json"), "")
         self.assertEqual(invoke("[]"), "")

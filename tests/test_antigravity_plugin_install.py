@@ -17,6 +17,7 @@ Exit codes:
 """
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -232,7 +233,8 @@ def main():
             set(arch_group.keys()) == {"PreToolUse"}
             and len(pre_tool) == 1
             and pre_tool[0].get("matcher") == "run_command"
-            and any("pre_pr_reminder.py" in h.get("command", "") for h in pre_tool[0].get("hooks") or [])
+            and [shlex.split(h.get("command", "")) for h in pre_tool[0].get("hooks") or []]
+            == [["python3", "./hooks/pre_pr_reminder.py"]]
             and arch_hook_script.is_file(),
             arch_hooks,
         )

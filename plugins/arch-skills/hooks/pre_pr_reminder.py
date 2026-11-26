@@ -6,19 +6,22 @@ Supports both Antigravity (`toolCall` / `hookEventName`) and Claude Code
 (`tool_input`) payloads, answering each in its own response format.
 
 The reminder is left out when every file the branch changes against the PR's
-base is a doc file (DOC_EXTENSIONS). The repo is the last `cd <dir>` in the
-command, else the hook's cwd (or first workspacePath on Antigravity); the base
-is `--base`/`-B`, else origin's default branch. If git can't answer, the
-reminder is shown.
+base is a doc file (DOC_EXTENSIONS). The repo is the last `cd <dir>` that
+starts a command in the command line, else the hook's cwd (or first
+workspacePath on Antigravity); the base is `--base`/`-B`, else origin's
+default branch (origin/HEAD). If git can't answer, or the default branch is
+not known, the reminder is shown.
 
 Reads the hook JSON on stdin; prints one JSON object (or nothing on Claude Code
 when no reminder applies)."""
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
 
+PR_CREATE = re.compile(r"\bgh\s+pr\s+create\b")
 DOC_EXTENSIONS = {".md", ".mdx", ".markdown", ".txt", ".rst", ".adoc"}
 
 REMINDER = (
@@ -35,31 +38,40 @@ def git(repo, *args):
     return out.stdout.strip()
 
 
+def shell_words(cmd):
+    """The command line as words, with `;`, `&&`, `||`, `|` and brackets as words of their own."""
+    lexer = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    try:
+        return list(lexer)
+    except ValueError:
+        return cmd.split()
+
+
 def parse(cmd, cwd):
     """Returns (repo dir, base branch or None) from the shell command."""
-    try:
-        words = shlex.split(cmd, posix=True)
-    except ValueError:
-        words = cmd.split()
+    words = shell_words(cmd)
     repo, base = cwd, None
+    starts_command = True
     for i, word in enumerate(words):
         nxt = words[i + 1] if i + 1 < len(words) else None
-        if word == "cd" and nxt:
+        if word and not word.strip("();<>|&"):
+            starts_command = True
+            continue
+        if starts_command and word == "cd" and nxt:
             path = os.path.expanduser(nxt)
             repo = path if os.path.isabs(path) else os.path.join(repo, path)
         elif word in ("--base", "-B") and nxt:
             base = nxt
         elif word.startswith("--base="):
             base = word.split("=", 1)[1]
+        starts_command = False
     return repo, base
 
 
 def changed_files(repo, base):
     if base is None:
-        try:
-            base = git(repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").split("/", 1)[1]
-        except RuntimeError:
-            base = "main"
+        base = git(repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").split("/", 1)[1]
     for ref in (f"origin/{base}", base):
         try:
             git(repo, "rev-parse", "--verify", "--quiet", ref)
@@ -72,7 +84,7 @@ def changed_files(repo, base):
 def docs_only(cmd, cwd):
     try:
         files = changed_files(*parse(cmd, cwd))
-    except (RuntimeError, OSError, subprocess.SubprocessError, IndexError):
+    except (RuntimeError, OSError, ValueError, subprocess.SubprocessError, IndexError):
         return False
     return bool(files) and all(os.path.splitext(f)[1].lower() in DOC_EXTENSIONS for f in files)
 
@@ -104,7 +116,7 @@ def main():
     if not isinstance(data, dict):
         return
     is_antigravity, cmd, cwd = extract_request(data)
-    remind = "gh pr create" in cmd and not docs_only(cmd, cwd)
+    remind = bool(PR_CREATE.search(cmd)) and not docs_only(cmd, cwd)
     if is_antigravity:
         out = {"decision": "allow"}
         if remind:
