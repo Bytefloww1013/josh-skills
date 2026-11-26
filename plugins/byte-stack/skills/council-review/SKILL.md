@@ -1,6 +1,6 @@
 ---
 name: council-review
-description: Gets a rigorous, scored review from a council of three models from three providers (Claude Opus 5.5, Gemini 4 Neon, GPT-6.2 Sol), with DeepSeek V4.1 Flash as the fallback seat, and repeats it after fixes until every seat is satisfied. Reviews code (a PR, branch or diff), UI changes from screenshots, plans, architecture decisions, feature ideas and other implementation details. Use only when the user says "council" or asks for a council review. Never start it yourself, and never as a routine step before a PR.
+description: Gets a scored review from a council of three models from three providers (Claude Opus 5.5, Gemini 4 Neon, GPT-6.2 Sol, with DeepSeek V4.1 Flash as the fallback seat) and repeats it after fixes until every seat is satisfied. Reviews code, UI screenshots, plans and design decisions. Use only when the user says "council" or asks for a council review. Never start it yourself.
 ---
 
 # Council review

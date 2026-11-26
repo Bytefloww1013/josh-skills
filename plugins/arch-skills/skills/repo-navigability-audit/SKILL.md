@@ -1,6 +1,6 @@
 ---
 name: repo-navigability-audit
-description: Audits how easily people and coding agents can find, understand and extend code in a repository, and returns a scored report with ranked fixes and drafts of AGENTS.md and ARCHITECTURE.md. Covers front-door files (AGENTS.md, CLAUDE.md, ARCHITECTURE.md, ADRs), deep folders and generic folder names (utils, helpers, common, misc), module entry points, golden-path examples, one name per domain concept, and stale paths in docs. Use whenever asked to audit or review a repo's structure or organization, "why do agents get lost or duplicate code here", "set up or improve AGENTS.md or CLAUDE.md", "make this repo agent-ready", or to onboard agents or new developers; also when PR reviews keep finding copied helpers. Do not use for website or app navigation (use ia-review), for reviewing a diff (use pr-erosion-check), or for one design choice (use architecture-decision-review).
+description: Audits how easily people and coding agents find, understand and extend code in a repo, and returns a scored report with ranked fixes and an AGENTS.md draft. Use to audit a repo's structure, make it agent-ready, or set up AGENTS.md or CLAUDE.md.
 ---
 
 # Repo Navigability Audit

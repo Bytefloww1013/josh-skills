@@ -1,6 +1,6 @@
 ---
 name: figure-it-out
-description: "Design and run an auditable playbook for a large task that no existing playbook or single plan covers: a big migration, an ambitious multi-part change, or work a human reviews after stepping away. Scales rigor to the task, runs a hypothesis loop, and keeps a decision log. Use for /figure-it-out or 'figure it out', or when bmode finds no playbook for a large or multi-part task. Not for a task an existing playbook covers, or for one design choice (use architect)."
+description: "Design and run an auditable playbook for a large task that no existing playbook or single plan covers, such as a big migration or an ambitious multi-part change. Use for /figure-it-out or 'figure it out', or when bmode finds no playbook for a large task. Not for one design choice (use architect)."
 ---
 
 # Figure it out
