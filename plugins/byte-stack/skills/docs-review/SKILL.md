@@ -1,6 +1,6 @@
 ---
 name: docs-review
-description: Review bphs-connect's docs against the code they describe, through a finder agent, a quote check and a refuter agent, and post what survives as a PR comment (pr) or a docs-drift issue (full). Use before merging a PR that changes code a doc describes, and before each production upgrade.
+description: Review this repo's docs against the code they describe, through a finder agent, a quote check and a refuter agent, and post what survives as a PR comment (pr) or a docs-drift issue (full). Use before merging a PR that changes code a doc describes, and before each production upgrade.
 argument-hint: "pr [<PR number>] | full [<folder>] [--base <ref>] [--no-post]"
 disable-model-invocation: false
 ---

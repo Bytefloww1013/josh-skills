@@ -1,6 +1,6 @@
 {
   "name": "byte-stack",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "bmode for bphs-connect: its playbooks, the principle skills it applies under the repo's rules, its helper skills, its docs-add and docs-review skills, the gen-issue skill that files a GitHub issue, and the byte-agent delegate subagent. For any repo: the byte-handoff skill (the handoff guard hook is Claude Code only).",
   "author": {
     "name": "Bytefloww1013"
