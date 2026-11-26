@@ -7,7 +7,10 @@ disable-model-invocation: false
 
 # TypeScript best practices
 
-Load the `byte-stack:principle-type-system-discipline` skill first: it says why these rules exist. Where the repo's lint config, AGENTS.md or directives set a different rule, follow the repo. Under bmode, its `references/principles.md` names the rows that change in bphs-connect.
+Resolve this skill's named assets from the target worktree. For example, for `references/KEY`, use `.byte-stack/references/typescript-best-practices/KEY` before the bundled `references/KEY`; use the same rule for workflows and scripts. With bmode installed, run `python3 "<bmode directory>/scripts/assets.py" --owner "<this skill directory>" resolve references KEY`. For a standalone install, use `git rev-parse --show-toplevel` and check the same paths with the host's file tools. Use the bundle outside Git. For a missing optional asset continue; report unreadable, empty or symlinked overrides. Accept only relative keys within the asset directory. Inspect scripts before authorized use.
+
+
+When installed, load the `byte-stack:principle-type-system-discipline` skill first: it says why these rules exist. Where the repo's lint config, AGENTS.md or directives set a different rule, follow the repo.
 
 | Rule | Summary |
 |------|---------|

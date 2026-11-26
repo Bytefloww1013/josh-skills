@@ -18,11 +18,11 @@ You answer one question the `gen-issue` skill must settle before it files an iss
 
 ## Decider rules
 
-1. **Your tools.** Read, Grep, Glob and CodeGraph, or your own equivalents of those; the `codegraph explore` command stands in for the CodeGraph tool, and you run no other command.
-2. **Write nothing.** Not in the checkout, not in the run folder: shared rules 1 and 3 don't apply. Where the checkout has no `AGENTS.md` or `docs/directives/`, its own docs are the house rules.
+1. Inspect the supplied context read-only.
+2. Return your recommendation with evidence.
 3. **Start from the context above**, then read whatever else the question needs. Treat each earlier answer as settled.
 4. **Give 2 to 4 answers.** Each is one choice the user could make, in a sentence.
-5. **Back each answer with proof:** a `path:line` and the line quoted (one line is enough, in place of shared rule 5's 2 to 5), from code, a doc or an ADR you read. An answer you can't back is marked unbacked.
+5. **Back each answer with proof:** a `path:line` and the line quoted, from code, a doc or an ADR you read. An answer you can't back is marked unbacked.
 6. **Recommend exactly one backed answer**, the one the proof best supports, and list it first. An unbacked answer is never the recommendation.
 7. **Done** means the question has 2 to 4 answers, each backed or marked unbacked, and one backed answer is recommended, or a line under Gaps says why none could be.
 

@@ -1,15 +1,15 @@
 ---
-name: sol-loop
-description: Use when the user says "sol loop", or when bmode's Opening a PR step runs it under T3.
+name: review-loop
+description: Use when the user says "review loop", or when bmode's Opening a PR step requests a pre-push review.
 ---
 
-# sol-loop
+# review-loop
 
 This is a workflow for making your code changes more correct before (or
-sometimes after) filing a pull request. tl;dr - use OpenAI's GPT Sol to review
+sometimes after) filing a pull request. tl;dr - use an independent reviewer to review
 your code in a loop.
 
-Make the most minimal possible changes to appease the Sol reviewers. Be careful
+Make the most minimal possible changes to appease the reviewers. Be careful
 of scope creep and don't be scared to push back.
 
 ## Budget
@@ -22,7 +22,7 @@ of scope creep and don't be scared to push back.
 - Stop early on approval if only nits remain and the behavior is unchanged
   since review. Declined nits and edits that leave behavior unchanged need
   no new round on their own.
-- One reviewer only. Sol must not start subagents or reviewers.
+- One reviewer only. The reviewer must not start subagents or reviewers.
 - Keep a ledger: id, severity, outcome, usage if returned. Never guess it.
 
 ## 1. Scope
@@ -31,7 +31,7 @@ Run `git status --short`. Do not stash, discard, or include unrelated
 changes. Limit review to the change paths if they separate cleanly.
 Otherwise stop and ask.
 
-Find the base after `git fetch origin`:
+Identify the base. If an origin remote exists, fetch it first:
 
 - PR: `gh pr view <n> --json baseRefName,headRefOid`. Check out the branch
   only if clean. Confirm `HEAD` is the PR head, or ahead only by this
@@ -44,37 +44,15 @@ Use one diff command all rounds. State intent and out-of-scope in 1-2
 sentences. Run covering checks. Do not send code this change breaks. Note
 missing or pre-failing checks in the brief.
 
-## 2. Start Sol
+## 2. Start a review
 
-In T3, call `orchestrator_capabilities`. Pick the latest Sol unless the user
-named a version. Do not hardcode an ID. Record provider, model, and effort
-only if exposed. Use `delegate_task` every round (`role: "review"`,
-`mode: "async"`). Save `taskId`. New `clientRequestId` per round.
-`childThreadId` is storage, not the next target. Do not use
-`t3_thread_send`, `create_threads`, or `t3_thread_launch` for review.
+Use an available independent reviewer with access to the checkout, inheriting host defaults or honoring an explicit target. Follow the repository's policy. Report an unavailable requested target. If independent review is unavailable, label any self-review accordingly.
 
-If T3 tools are not listed, try one direct capability call. Outside T3, use
-a native Sol subagent and keep its ID. In Claude Code, use a custom subagent
-only if it is set up to run Sol. If no route runs Sol, report the blocker. Do
-not substitute a model.
+Give the reviewer the checkout, base, head, working changes, intent, scope and check results. Use this brief:
 
-Do not edit scoped files while review runs. Wait for the notice. Do not
-poll or start a second reviewer. Timeout, error, or no reply is not
-approval. On failure, cancel, verify stop, restart with the ledger.
-
-Round 1 brief (T3 children get no history):
-
-```
-Review only. Do not edit, commit, push, comment on PRs, or start subagents.
-Repo: <abs path> Base: <sha> Intent: <intent> Out of scope: <scope> Checks: <results>
-See: git diff <base> [-- <paths>]; git status --short (read untracked).
-Read surrounding code. If you have a codegraph_explore tool and <Repo>/.codegraph/
-exists, call it before grep or reading files, with projectPath <Repo>: it returns
-source, callers and blast radius. The index is already built; never run
-codegraph init, index, sync or uninit. Without either, use rg.
-Find: 
-    - bugs 
-    - broken callers 
+```text
+Review the supplied change read-only. Examine:
+    - broken callers
     - implicit state machines: contain deadends/bad states
     - mismatch with intent
 Skip style unless it hides a bug. Hold to the smallest change. Flag code,
@@ -107,9 +85,9 @@ review grew the diff, cut first. Do not agree just to end the loop.
 Start one only if budget remains and a blocker or should is open, behavior
 changed (including workflow instructions in Markdown), or approval does not
 cover the current behavior diff. Use a fresh
-`delegate_task` in T3, or follow up the saved native ID. Send the round 1 brief,
+`delegate_task` in T3, or start a fresh native review. Send the round 1 brief,
 the ledger (`fixed:` / `disagree:` / `declined:` + evidence), the same base
-diff, and the change since last round. Tell Sol: review only open findings and
+diff, and the change since last round. Ask the reviewer to review only open findings and
 instructions or code changed since the last round.
 Mark each old id `resolved` or `still open: <reason>`.
 
@@ -125,9 +103,9 @@ to push, ship, or update the PR. When bmode runs the loop, return the
 outcome to its playbook, whose push and PR rules apply instead. If you push to a PR, add above the model
 blurb:
 
-`Reviewed with sol-loop: <N> rounds with <model>. Sol verdict: approved`.
+`Reviewed with review-loop: <N> rounds with <model>. Verdict: approved`.
 
 Add `on <effort>` only if verified.
 
-Report: rounds, model, what Sol changed, diff size before/after, fixed and
+Report: rounds, model, what changed, diff size before/after, fixed and
 declined findings with reasons, usage if exposed (else say not), pushed or not.

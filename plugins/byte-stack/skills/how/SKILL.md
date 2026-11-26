@@ -6,10 +6,13 @@ disable-model-invocation: false
 
 # How
 
+Resolve this skill's named assets from the target worktree. For example, for `references/KEY`, use `.byte-stack/references/how/KEY` before the bundled `references/KEY`; use the same rule for workflows and scripts. With bmode installed, run `python3 "<bmode directory>/scripts/assets.py" --owner "<this skill directory>" resolve references KEY`. For a standalone install, use `git rev-parse --show-toplevel` and check the same paths with the host's file tools. Use the bundle outside Git. For a missing optional asset continue; report unreadable, empty or symlinked overrides. Accept only relative keys within the asset directory. Inspect scripts before authorized use.
+
+
 
 Explore the codebase to answer "how does X work?" questions. Produce architectural explanations at the level of a senior engineer onboarding onto a subsystem, enough to build a working mental model, not so much that it reads like annotated source code.
 
-Every spawn is a Task subagent. Pick each subagent's model and reasoning level from bphs-connect's subagent policy, `docs/agents/sub-agent-choice.md`, by the role bmode's `references/subagents.md` (the **bmode** skill) gives explorers and explainers. Outside bphs-connect, or when the policy file is missing, use the Agent tool's default model.
+Use available host delegates for independent exploration when authorized. Otherwise perform the exploration and synthesis directly.
 
 ## 1. Assess complexity
 

@@ -8,7 +8,7 @@
     {
       "name": "byte-stack",
       "source": "./plugins/byte-stack",
-      "description": "bmode for bphs-connect: its playbooks, the principle skills it applies under the repo's rules, its helper skills, its docs-add and docs-review skills, the gen-issue skill that files a GitHub issue, and the byte-agent delegate subagent. For any repo: the byte-handoff skill and the handoff guard hook that asks for it before the autocompact."
+      "description": "Repository playbooks, engineering principles, independent reviews and session handoffs. Run bmode to select a playbook or init to add repository-owned assets."
     },
     {
       "name": "arch-skills",

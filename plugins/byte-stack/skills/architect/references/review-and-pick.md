@@ -56,10 +56,6 @@ When the Skill tool can't load `arch-skills:*`, for example in a cloud session t
 2. If you can't find them, compare the plans yourself. For each plan, list each red flag from [design-red-flags.md](design-red-flags.md) and each boundary crossing stronger than a name or type. Pick the plan with fewer of both. Break a tie on interface depth: the smaller public surface that hides more.
 3. In `final-plan.md` and the reply, say that arch-skills did not review the pick and which of the two fallbacks you used.
 
-## Choosing models
+## Selecting reviewers
 
-Don't hard-code a model for a planner or a reviewer. bphs-connect's `docs/agents/sub-agent-choice.md` is the policy for which model runs each subagent role, tried in order. bmode's `references/subagents.md` says how to apply it, and `references/t3-model-routing.md` covers T3.
-
-- **Planners** take the policy's implementor role. Give the two planners the first two available models on that list, one each, so the plans come from different models. If only one is available, both planners use it.
-- **Reviewers** take the policy's reviewer role.
-- Outside bphs-connect, or when the policy file is missing, use the Agent tool's default model and say so in the reply.
+Honor user selections and applicable repository policy. Otherwise inherit the available host default and give each planner an independent brief.

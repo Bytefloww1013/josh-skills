@@ -14,15 +14,31 @@ FAIL. Exit 0 on PASS, 1 on FAIL.
 import json, pathlib, re, sys
 
 HERE = pathlib.Path(__file__).resolve().parent
+# The trusted resolver is part of this installed skill, even under python -I.
+sys.path.insert(0, str(HERE.parents[1] / "scripts"))
+sys.dont_write_bytecode = True
+from assets import resolve
+
+
+def template_text(name):
+    _, path = resolve(pathlib.Path.cwd(), "references", f"briefs/{name}.md")
+    return path.read_text(encoding="utf-8")
+
+
 ROLES = sorted(f.stem for f in HERE.glob("*.md") if f.name != "shared-rules.md")
 PLACE = re.compile(r"[\w./-]+\.\w+:\d+")
 
 
 def spec(role):
-    text = (HERE / f"{role}.md").read_text()
-    block = text.split("````markdown", 1)[1].split("\n````", 1)[0]
-    headings = [h for h in re.findall(r"^## (.+)$", block, re.M)]
-    label, values = re.search(r"^\*\*(Status|Verdict):\*\* (.+)$", block, re.M).groups()
+    text = template_text(role)
+    block = re.search(r"^````markdown\n(.*?)^````", text, re.M | re.S)
+    if block is None:
+        sys.exit(f"{role}: template needs a fenced Markdown report")
+    headings = re.findall(r"^## (.+)$", block[1], re.M)
+    field = re.search(r"^\*\*(Status|Verdict):\*\* (.+)$", block[1], re.M)
+    if field is None:
+        sys.exit(f"{role}: template report needs a Status or Verdict line")
+    label, values = field.groups()
     return headings, label, [v.strip() for v in values.split("|")]
 
 

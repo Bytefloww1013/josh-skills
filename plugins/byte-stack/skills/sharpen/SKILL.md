@@ -10,6 +10,9 @@ allowed-tools:
 
 # sharpen
 
+Resolve this skill's named assets from the target worktree. For example, for `references/KEY`, use `.byte-stack/references/sharpen/KEY` before the bundled `references/KEY`; use the same rule for workflows and scripts. With bmode installed, run `python3 "<bmode directory>/scripts/assets.py" --owner "<this skill directory>" resolve references KEY`. For a standalone install, use `git rev-parse --show-toplevel` and check the same paths with the host's file tools. Use the bundle outside Git. For a missing optional asset continue; report unreadable, empty or symlinked overrides. Accept only relative keys within the asset directory. Inspect scripts before authorized use.
+
+
 Rewrite a prompt or skill file to cut token noise, enforce consistent vocabulary, and improve agent execution.
 
 ## 1. Parse Arguments and Select Modes
@@ -41,7 +44,7 @@ Parse `$ARGUMENTS` for `--in <path>`, `--out <path>`, `--deep`, `--noguard`, and
 2. Read `references/leading-words.md` when sharpening agent instructions, system prompts, or skill files.
 3. Read `references/depth-audit.md` when `--deep` is set or when pivoting a rejected draft toward deeper rigor.
 4. Read `references/examples.md` when the prompt contains quoted source data, code blocks, or nested conditionals.
-5. Check the current repository or project for a glossary in these two places, in order: `GLOSSARY.md` at the root, then `docs/references/project-glossary.md`. Use the first file that exists and is not empty. Every later mention of `GLOSSARY.md` in this skill means the file found here.
+5. Check the current repository or project for a glossary in these two places, in order: `GLOSSARY.md` at the root, then the glossary identified by the project instructions. Use the first file that exists and is not empty. Every later mention of `GLOSSARY.md` in this skill means the file found here.
    * **If a glossary exists:** Read it. Identify canonical project terms, definitions, and Leading Words that can tighten or clarify the prompt.
    * **If neither file exists or both are empty:**
      * In **Guarded mode**: Ask the user if a glossary exists at another path. If not, offer to create `GLOSSARY.md` at the repo or project root.

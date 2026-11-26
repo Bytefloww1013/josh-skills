@@ -1,0 +1,12 @@
+{
+  "name": "byte-stack",
+  "description": "Repository playbooks, engineering principles, independent reviews and session handoffs. Run bmode to select a playbook or init to add repository-owned assets.",
+  "author": {
+    "name": "Bytefloww1013"
+  },
+  "repository": "https://github.com/Bytefloww1013/josh-skills",
+  "version": "2.0.0",
+  "skills": "./skills/",
+  "hooks": [],
+  "onboardingSkill": "./skills/init/SKILL.md"
+}
