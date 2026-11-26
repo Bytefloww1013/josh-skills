@@ -17,7 +17,7 @@ claude plugin install byte-stack@josh-skills --scope user
 agy plugin install /path/to/josh-skills/plugins/byte-stack
 ```
 
-`byte-stack` ships both `.claude-plugin/plugin.json` and `.antigravity-plugin/plugin.json` at the same version so each harness loads the metadata and hooks it supports without post-install patching.
+`byte-stack` ships `.claude-plugin/plugin.json` for Claude Code and `.antigravity-plugin/plugin.json` for Antigravity, so each harness loads the metadata and hooks it supports with no patching after the install. Only the Antigravity manifest has a `version`. Claude Code takes the version of a plugin without one from the commit, so every push to `main` is an update; a `version` in `.claude-plugin/plugin.json` would pin the plugin until the number changed. Bump the Antigravity `version` when a change should reach Antigravity installs.
 
 ## Subagent (`byte-agent`)
 
@@ -25,8 +25,8 @@ agy plugin install /path/to/josh-skills/plugins/byte-stack
 
 ## Handoff-guard hooks and harness support
 
-- **Claude Code:** `.claude-plugin/plugin.json` loads `hooks/claude-hooks.json`, which wires `hooks/handoff-guard.py` to `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, and `PreCompact`.
-- **Antigravity:** No handoff-guard hooks are registered (`.antigravity-plugin/plugin.json` loads the plugin natively without a root `hooks.json`).
+- **Claude Code:** loads `hooks/hooks.json`, which wires `hooks/handoff-guard.py` to `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, and `PreCompact`.
+- **Antigravity:** registers no handoff-guard hooks. It reads plugin hooks only from a `hooks.json` at the plugin root, and byte-stack has none. `agy plugin validate --strict` warns that `hooks/hooks.json` is never loaded; that warning is expected.
   - `PreCompact` and `UserPromptSubmit` are unsupported in Antigravity (those events do not exist).
   - `SessionStart`, `PreToolUse`, and `PostToolUse` exist in Antigravity, but `hooks/handoff-guard.py` is unverified under Antigravity (it reads Claude Code JSONL transcripts, Claude autocompact settings, and snake_case hook payloads, and returns Claude Code `hookSpecificOutput` JSON), so none of those events are enabled on Antigravity.
 

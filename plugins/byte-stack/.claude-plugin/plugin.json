@@ -1,10 +1,8 @@
 {
   "name": "byte-stack",
-  "version": "1.1.0",
   "description": "bmode for bphs-connect: its playbooks, the principle skills it applies under the repo's rules, its helper skills, its docs-add and docs-review skills, the gen-issue skill that files a GitHub issue, and the byte-agent delegate subagent. For any repo: the byte-handoff skill and the handoff guard hook that asks for it before the autocompact.",
   "author": {
     "name": "Bytefloww1013"
   },
-  "repository": "https://github.com/Bytefloww1013/josh-skills",
-  "hooks": "./hooks/claude-hooks.json"
+  "repository": "https://github.com/Bytefloww1013/josh-skills"
 }

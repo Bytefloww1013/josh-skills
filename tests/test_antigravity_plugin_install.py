@@ -168,12 +168,14 @@ def main():
                 plugins_by_name = {}
 
         arch_src_ver = json.loads((arch_src / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))["version"]
-        byte_claude_ver = json.loads((byte_src / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))["version"]
+        byte_claude = json.loads((byte_src / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
         byte_agy_ver = json.loads((byte_src / ".antigravity-plugin" / "plugin.json").read_text(encoding="utf-8"))["version"]
+        # Claude Code takes a plugin with no `version` from the commit, so each push is an update. A `version` there
+        # would pin the plugin until someone changed the number.
         check(
-            "byte-stack manifests declare matching versions",
-            byte_claude_ver == byte_agy_ver and bool(byte_claude_ver),
-            f"claude={byte_claude_ver!r}, antigravity={byte_agy_ver!r}",
+            "byte-stack: the Antigravity manifest has the version, the Claude Code manifest has none",
+            bool(byte_agy_ver) and "version" not in byte_claude,
+            f"claude={byte_claude.get('version')!r}, antigravity={byte_agy_ver!r}",
         )
 
         arch_entry = plugins_by_name.get("arch-skills") or {}
@@ -189,7 +191,7 @@ def main():
         check(
             "byte-stack listed as enabled with source version, byte-agent, and no hooks",
             byte_entry.get("enabled") is True
-            and byte_entry.get("version") == byte_claude_ver
+            and byte_entry.get("version") == byte_agy_ver
             and byte_entry.get("agents") == ["byte-agent"]
             and "bmode" in (byte_entry.get("skills") or [])
             and "byte-handoff" in (byte_entry.get("skills") or [])
@@ -201,24 +203,23 @@ def main():
         byte_dir = Path(byte_entry["path"]) if byte_entry.get("path") else Path(env["HOME"]) / ".gemini" / "config" / "plugins" / "byte-stack"
 
         # 3. Validate both installed directories with `agy plugin validate --strict --json`.
+        # byte-stack keeps its Claude Code hooks in `hooks/hooks.json`. Antigravity reads plugin hooks only from a
+        # `hooks.json` at the plugin root, so it loads none of them and warns about that file. That warning is the
+        # wanted result (the handoff guard is Claude Code only); any other warning or error fails.
+        expected_warnings = {"arch-skills": [], "byte-stack": ["hooks/hooks.json"]}
         for name, installed_dir in (("arch-skills", arch_dir), ("byte-stack", byte_dir)):
             val = run_cmd([agy, "plugin", "validate", str(installed_dir), "--strict", "--json"], env=env)
-            val_ok = val.returncode == 0
-            detail = val.stderr.strip() or val.stdout.strip()
-            if val_ok:
-                try:
-                    report = json.loads(val.stdout)
-                    bad = [
-                        f for f in report.get("findings") or []
-                        if f.get("severity") in ("error", "warning")
-                    ]
-                    if bad:
-                        val_ok = False
-                        detail = str(bad)
-                except ValueError as exc:
-                    val_ok = False
-                    detail = f"non-JSON validate output: {exc}"
-            check(f"agy plugin validate --strict passes for installed {name}", val_ok, detail)
+            try:
+                findings = json.loads(val.stdout[: val.stdout.rindex("}") + 1]).get("findings") or []
+                errors = [f for f in findings if f.get("severity") == "error"]
+                warned = sorted(f.get("file") for f in findings if f.get("severity") == "warning")
+                val_ok = not errors and warned == expected_warnings[name] and (val.returncode == 0) == (not warned)
+                detail = str(errors or [f for f in findings if f.get("severity") == "warning"])
+            except ValueError as exc:
+                val_ok = False
+                detail = f"non-JSON validate output: {exc}: {val.stderr.strip() or val.stdout.strip()}"
+            label = "passes" if not expected_warnings[name] else "warns only that hooks/hooks.json is never loaded"
+            check(f"agy plugin validate --strict {label} for installed {name}", val_ok, detail)
 
         # 4. Inspect registered hook events on disk.
         arch_hooks_path = arch_dir / "hooks.json"
@@ -239,7 +240,7 @@ def main():
         byte_hooks_path = byte_dir / "hooks.json"
         byte_hooks = json.loads(byte_hooks_path.read_text(encoding="utf-8")) if byte_hooks_path.is_file() else {}
         check(
-            "byte-stack registers no unverified Antigravity hooks",
+            "byte-stack registers no Antigravity hooks",
             not byte_hooks_path.exists() or byte_hooks == {},
             byte_hooks,
         )

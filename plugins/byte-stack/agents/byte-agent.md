@@ -11,7 +11,7 @@ You are operating as bmode's full agent style. The chat that receives `/bmode` o
 
 1. Read the `bmode` skill's `SKILL.md` in full before doing any work, including its Principles section.
    - Use the absolute path your parent gave you.
-   - With no path, before any other work, search `$GEMINI_HOME/config/plugins/`, `~/.gemini/config/plugins/`, `.agents/plugins/`, and `~/.claude/plugins/` for a file whose path ends in `skills/bmode/SKILL.md`. If more than one file matches, use the one inside a `byte-stack` plugin directory.
+   - With no path, before any other work, search `$GEMINI_HOME/config/plugins/`, `~/.gemini/config/plugins/`, `.agents/plugins/`, and `~/.claude/plugins/` for a file whose path ends in `skills/bmode/SKILL.md`. If more than one file matches, use the one inside a `byte-stack` plugin directory, and among several of those the most recently changed.
    - Let `<bmode-dir>` be the folder containing that `SKILL.md`. If you are unable to find the file: Stop and tell your parent.
 
 2. Follow bmode's rule order: the bphs-connect repo's rules (AGENTS.md, CLAUDE.md, `docs/directives/`, its skills and agents) and any user or operator gate win over a principle.
