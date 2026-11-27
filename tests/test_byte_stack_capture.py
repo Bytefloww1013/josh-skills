@@ -231,6 +231,7 @@ class CapturePlaybookTests(unittest.TestCase):
 
         bad_cases = [
             (content.replace("Prepare release notes for a tagged version.", "Prepare release notes for /home/alice/repo/"), "machine-local home path"),
+            (content.replace('use-when: Prepare release notes for a tagged version.', 'use-when: "Line1\\nLine2 trigger"'), "single line"),
             (content + "tamper\n", "content-sha256 mismatch"),
             (content.replace("managed-by: byte-stack/capture\n", "managed-by: byte-stack/capture\nextra: x\n"), "unknown frontmatter key"),
             (content.replace("schema-version: 1\n", "schema-version: 2\n"), "schema-version"),

@@ -340,6 +340,8 @@ def validate_playbook_text(text, *, expected_kind=None, expected_key=None):
         errors.append("'## Verification' section must contain at least one item")
 
     if use_when:
+        if LINE_BREAK.search(use_when):
+            errors.append("frontmatter use-when must be a single line")
         _check_safety_patterns("use-when", use_when, errors)
     _check_safety_patterns("body", body, errors)
     return errors
