@@ -1711,5 +1711,108 @@ class ExtractAssetsTests(unittest.TestCase):
         self.assertIn("command not found", out.stderr + out.stdout)
 
 
+    def test_argument_errors_quoted_root_deep_home_paths_and_web_urls(self):
+        # A usage error does not echo a credential-shaped argument.
+        token = "ghp_" + "A" * 24
+        out = self.extract("inventory", "--max-bytes", token, code=2)
+        self.assertNotIn(token, out.stderr + out.stdout)
+        self.assertIn("error", out.stderr)
+
+        # The repository root is redacted inside typographic quotes too, and a home
+        # directory is caught at any depth of an absolute path.
+        deep = "/mnt/org/teams/region/hosts/userdata/home/sample"
+        self.add_tracked_file(
+            "docs/directives/places.md",
+            "# Checkout lives at “" + str(self.repo) + "” today\n\n## Shared files in " + deep + "\n\n"
+            "## Guide at https://example.test/home/docs/index\n",
+        )
+        inv_out = self.extract("inventory").stdout
+        self.assertNotIn(str(self.repo), inv_out)
+        self.assertNotIn(deep, inv_out)
+        self.assertIn("https://example.test/home/docs/index", inv_out)
+        for label, cand in (
+            ("reference", make_reference_candidate(content="# Notes\n\nShared files in " + deep + "\n")),
+            ("script", make_script_candidate(content="#!/bin/sh\nls " + deep + "\n")),
+            ("playbook", make_playbook_candidate(steps=["List " + deep])),
+        ):
+            with self.subTest(kind=label):
+                out = self.extract("write", "--stdin", "--dry-run", code=1, stdin_text=json.dumps(envelope(cand)))
+                self.assertIn("machine-local", out.stderr + out.stdout)
+
+        # A web URL whose path has a home segment is ordinary documentation.
+        linked = make_reference_candidate(content="# Notes\n\nRead https://example.test/home/docs/index first.\n")
+        self.extract("write", "--stdin", "--dry-run", stdin_text=json.dumps(envelope(linked)))
+        self.assertFalse(self.local.exists())
+
+    def test_provenance_round_trip_for_continuations_dotted_scripts_just_and_toml_comments(self):
+        self.add_tracked_file("CONTRIBUTING.md", "# Contributing\n\n```sh\ngit status \\\n  --short\nmake test\n```\n")
+        self.add_tracked_file(
+            "package.json",
+            '{\n  "name": "fixture",\n  "scripts": {\n    "lint.fix": "eslint --fix .",\n    "test": "node --test"\n  }\n}\n',
+        )
+        self.add_tracked_file("Justfile", "test:\n    cargo test --all\n")
+        self.add_tracked_file("ruff.toml", 'line-length = 100\n\n[format] # style rules\nquote-style = "double"\n')
+        inv = json.loads(self.extract("inventory").stdout)
+        files = {f["path"]: f for bucket in inv["categories"].values() for f in bucket}
+
+        def signals(path, kind):
+            return [s for s in files[path]["signals"] if s["kind"] == kind]
+
+        # One joined command for a fenced continuation, at its first line.
+        self.assertIn({"kind": "command", "line": 4, "text": "git status --short"}, signals("CONTRIBUTING.md", "command"))
+        self.assertNotIn("--short", [s["text"] for s in signals("CONTRIBUTING.md", "command")])
+        self.assertIn("scripts.lint.fix", [s.get("key") for s in signals("package.json", "command")])
+        self.assertIn("cargo test --all", [s["text"] for s in signals("Justfile", "command")])
+        self.assertIn("format.quote-style", [s["text"] for s in signals("ruff.toml", "key")])
+
+        # Every command and key the scan prints can be cited at its line.
+        for path in ("CONTRIBUTING.md", "package.json", "Justfile", "ruff.toml"):
+            for sig in files[path]["signals"]:
+                if sig["kind"] not in ("command", "key"):
+                    continue
+                prov = {"path": path, "line": sig["line"], sig["kind"]: sig["text"]}
+                if sig["kind"] == "command" and "key" in sig:
+                    prov["key"] = sig["key"]
+                with self.subTest(path=path, signal=sig["text"]):
+                    self.extract("write", "--stdin", "--dry-run", stdin_text=json.dumps(envelope(make_reference_candidate(provenance=[prov]))))
+
+        # A key under a commented section header is not accepted without its section.
+        bare = make_reference_candidate(provenance=[{"path": "ruff.toml", "key": "quote-style"}])
+        out = self.extract("write", "--stdin", "--dry-run", code=1, stdin_text=json.dumps(envelope(bare)))
+        self.assertIn("key not found", out.stderr + out.stdout)
+
+        # A package.json the scan cannot parse never yields the bare key "scripts".
+        self.add_tracked_file("package.json", '{\n  // comment\n  "name": "fixture",\n  "scripts": {\n    "test": "node --test"\n  }\n}\n')
+        inv = json.loads(self.extract("inventory").stdout)
+        package = next(f for f in inv["categories"]["task_runners"] if f["path"] == "package.json")
+        self.assertNotIn("scripts", [s["text"] for s in package["signals"] if s["kind"] == "key"])
+
+    def test_catalog_head_only_entries_are_flagged_and_reference_triggers_deduplicate(self):
+        # An asset larger than the 4 KiB head is listed, and marked as read in part.
+        body = "# Long\n\nUse when: Inspect a long asset.\n\n" + ("Filler line for the long asset.\n" * 200)
+        short = "# Short\n\nUse when: Inspect a short asset.\n\nBody.\n"
+        (self.local / "playbooks").mkdir(parents=True)
+        (self.local / "playbooks/long.md").write_text(body, encoding="utf-8")
+        (self.local / "playbooks/short.md").write_text(short, encoding="utf-8")
+        inv = json.loads(self.extract("inventory").stdout)
+        entries = {e["key"]: e for e in inv["byte_stack"]["playbooks"] if e["origin"] == "repo"}
+        self.assertTrue(entries["long.md"].get("truncated"))
+        self.assertNotIn("truncated", entries["short.md"])
+
+        # Two references with different titles and the same trigger are duplicates,
+        # within one batch and against a reference already in the repository.
+        def ref(key, title):
+            return make_reference_candidate(key=key, content="# " + title + "\n\nUse when: Verify dependency graph.\n\nBody of " + title + ".\n")
+
+        out = self.extract("write", "--stdin", "--dry-run", "--json", code=3, stdin_text=json.dumps(envelope(ref("graph-one.md", "Graph one"), ref("graph-two.md", "Graph two"))))
+        results = {r["id"]: r for r in json.loads(out.stdout)["results"]}
+        self.assertEqual(results["references/graph-one.md"]["dedupe_flags"], [])
+        self.assertIn("duplicates-catalog", results["references/graph-two.md"]["dedupe_flags"])
+        (self.local / "references").mkdir()
+        (self.local / "references/existing.md").write_text("# Existing\n\nUse when: Verify dependency graph.\n\nOld body.\n", encoding="utf-8")
+        out = self.extract("write", "--stdin", "--dry-run", "--json", code=3, stdin_text=json.dumps(envelope(ref("graph-one.md", "Graph one"))))
+        self.assertIn("duplicates-catalog", json.loads(out.stdout)["results"][0]["dedupe_flags"])
+
+
 if __name__ == "__main__":
     unittest.main()

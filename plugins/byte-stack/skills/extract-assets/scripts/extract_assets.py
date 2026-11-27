@@ -38,10 +38,10 @@ _PEM_END_RE = re.compile(r"-----END [A-Z ]*PRIVATE KEY-----")
 _BULLET_RE = re.compile(r"^(?:[-*+]|\d+\.)\s+")
 _WS_RE = re.compile(r"[ \t\r\n]*")
 
-LOCAL_PATH_PATTERNS = (
-    re.compile(r"(?<![\w.])(?<!:/)/(?:[^\s/\\'\"`<>|;,)\]}]+/){0,4}(?:home|Users)/[^\s/\\'\"`<>|;,)\]}]+(?:/[^\s'\"`<>|;,)\]}]*)?"),
-    re.compile(r"[A-Za-z]:\\Users\\[^\s/\\'\"`<>|;,)\]}]+(?:\\[^\s'\"`<>|;,)\]}]*)?"),
-)
+_ABS_PATH_RE = re.compile(r"(?<![\w.])(?<!:/)(?<!<repo>)(?<!<bmode>)(?<!<cwd>)/(?!/)[^\s'\"`<>|;,)\]}]+")
+_HOME_SEGMENT_RE = re.compile(r"/(?:home|Users)/[^/\\]")
+_WIN_HOME_RE = re.compile(r"[A-Za-z]:\\Users\\[^\s/\\'\"`<>|;,)\]}]+(?:\\[^\s'\"`<>|;,)\]}]*)?")
+_WEB_URL_RE = re.compile(r"\bhttps?://[^\s'\"`<>]+")
 LINK_FALLBACK_ERRNOS = frozenset(
     code for name in ("EPERM", "EOPNOTSUPP", "ENOTSUP", "EXDEV")
     for code in (getattr(errno, name, None),) if code is not None
@@ -155,14 +155,15 @@ def _build_sanitizer(repo=None, bmode_dir=None, bmode_capture=None, extra_paths=
             clean = raw.rstrip("/\\")
             if clean and clean not in seen:
                 seen.add(clean)
-                pat = re.compile(r"(?<![^\s'\"`<>|;,(\[{=:])" + re.escape(clean) + r"(?=$|[/\\\s'\"`<>|;,)\]}:]|\.(?=$|\s))")
+                pat = re.compile(r"(?<![\w.-])" + re.escape(clean) + r"(?=$|[^\w.-]|\.(?=$|\s))")
                 root_pats.append((len(clean), pat, token))
     root_pats.sort(key=lambda item: item[0], reverse=True)
     return root_pats, (bmode_capture.SECRET_PATTERNS if bmode_capture is not None else ())
 
 
 def _has_local_path(text):
-    return any(p.search(text) for p in LOCAL_PATH_PATTERNS)
+    """True for a Windows home path, or an absolute path with a home/<name> or Users/<name> segment at any depth."""
+    return bool(_WIN_HOME_RE.search(text)) or any(_HOME_SEGMENT_RE.search(m.group()) for m in _ABS_PATH_RE.finditer(text))
 
 
 def _contains_sensitive(text, sanitizer):
@@ -177,9 +178,8 @@ def _sanitize_str(text, sanitizer):
         out = pat.sub(token, out)
     for pat in secret_pats:
         out = pat.sub("<redacted-secret>", out)
-    for pat in LOCAL_PATH_PATTERNS:
-        out = pat.sub("<local-path>", out)
-    return out
+    out = _WIN_HOME_RE.sub("<local-path>", out)
+    return _ABS_PATH_RE.sub(lambda m: "<local-path>" if _HOME_SEGMENT_RE.search(m.group()) else m.group(), out)
 
 
 def _redact_diff(diff_text, sanitizer):
@@ -270,7 +270,8 @@ def _check_utf8(label, text, errors):
 def _check_safety_patterns(bmode_capture, label, text, errors, tracked_path=False):
     """Apply capture's guards plus the absolute home-path rule; a tracked path is relative, so only the latter."""
     capture_local = () if (bmode_capture is None or tracked_path) else bmode_capture.LOCAL_PATH_PATTERNS
-    if _has_local_path(text) or any(p.search(text) for p in capture_local):
+    without_urls = _WEB_URL_RE.sub(" ", text)
+    if _has_local_path(text) or any(p.search(without_urls) for p in capture_local):
         errors.append(f"{label} must not contain a machine-local home path")
     if bmode_capture is not None and any(p.search(text) for p in bmode_capture.SECRET_PATTERNS):
         errors.append(f"{label} appears to contain a secret or credential")
@@ -397,7 +398,7 @@ def _has_structured_extractor(rel_path):
 
 
 def _walk_json_keys(text):
-    """Return [(dotted_key, 1-based line_no, value), ...] for object properties in valid JSON, or None."""
+    """Return [(dotted_key, 1-based line_no, value, parent_key), ...] for object properties in valid JSON, or None."""
     dec, n, out = json.JSONDecoder(), len(text), []
 
     def walk_obj(i, prefix, depth):
@@ -414,7 +415,7 @@ def _walk_json_keys(text):
             i = _WS_RE.match(text, i + 1).end()
             fk = f"{prefix}.{key}" if prefix else key
             val, end_v = dec.raw_decode(text, i)
-            out.append((fk, key_line, val))
+            out.append((fk, key_line, val, prefix))
             if isinstance(val, dict) and depth < 3:
                 walk_obj(i, fk, depth + 1)
             i = _WS_RE.match(text, end_v).end()
@@ -486,7 +487,7 @@ def extract_signals(rel_path, text, sanitizer=None, bucket=None, for_provenance=
         return signals, truncated_signals, dropped_sensitive
 
     if suffix in (".md", ".mdx"):
-        in_fence, fence_shell = False, False
+        in_fence, fence_shell, joined = False, False, dict(_logical_lines(lines))
         for idx, line in enumerate(lines, 1):
             stripped = line.strip()
             if stripped.startswith("```"):
@@ -494,23 +495,24 @@ def extract_signals(rel_path, text, sanitizer=None, bucket=None, for_provenance=
                 in_fence, fence_shell = (not in_fence), (not in_fence and lang in ("sh", "bash", "shell", "zsh", "console", ""))
             elif not in_fence and re.match(r"^#{1,4}\s+\S", stripped):
                 add_signal("heading", idx, stripped)
-            elif in_fence and fence_shell and stripped and not stripped.startswith("#"):
-                add_signal("command", idx, stripped[2:].strip() if stripped.startswith("$ ") else stripped)
+            elif in_fence and fence_shell and stripped and not stripped.startswith("#") and idx in joined:
+                cmd = joined[idx].strip()
+                add_signal("command", idx, cmd[2:].strip() if cmd.startswith("$ ") else cmd)
     elif suffix in (".json", ".jsonc"):
         entries = _walk_json_keys(text)
         if entries is not None:
-            for fk, ln, val in entries:
+            for fk, ln, val, parent in entries:
                 if lower_name == "package.json":
-                    if fk.startswith("scripts.") and fk.count(".") == 1 and isinstance(val, str):
+                    if parent == "scripts" and isinstance(val, str):
                         add_signal("command", ln, val, key_name=fk)
-                    elif "." not in fk and fk != "scripts":
+                    elif not parent and fk != "scripts":
                         add_signal("key", ln, fk)
                 else:
                     add_signal("key", ln, fk)
         else:
             for idx, line in enumerate(lines, 1):
                 m = re.match(r'^\s{1,2}"([^"]+)"\s*:', line)
-                if m:
+                if m and not (lower_name == "package.json" and m.group(1) == "scripts"):
                     add_signal("key", idx, m.group(1))
     elif suffix in (".yml", ".yaml"):
         in_run_block, run_indent, cont_parts, cont_line = False, 0, [], None
@@ -553,7 +555,7 @@ def extract_signals(rel_path, text, sanitizer=None, bucket=None, for_provenance=
         flush_cont()
     elif lower_name in ("makefile", "gnumakefile", "justfile") or suffix == ".mk":
         for start_ln, line in _logical_lines(lines):
-            if line.startswith("\t"):
+            if line.startswith("\t") or (lower_name == "justfile" and line.startswith(" ")):
                 cmd = " ".join(line.strip().split())
                 if cmd and not cmd.startswith("#"):
                     add_signal("command", start_ln, cmd.lstrip("@-+").strip())
@@ -567,7 +569,7 @@ def extract_signals(rel_path, text, sanitizer=None, bucket=None, for_provenance=
             stripped = line.strip()
             if not stripped or stripped.startswith(("#", ";")):
                 continue
-            m_sec = re.match(r"^\[{1,2}([^\]]+)\]{1,2}$", stripped)
+            m_sec = re.match(r"^\[{1,2}([^\]]+)\]{1,2}\s*(?:[#;].*)?$", stripped)
             if m_sec:
                 current_sec = m_sec.group(1).strip()
                 add_signal("key", idx, current_sec)
@@ -773,7 +775,7 @@ def collect_byte_stack_inventory(repo, bmode_dir, bmode_assets, bmode_capture, b
                     msg = str(err)
                     add_diag(kind, msg if str(path) in msg else f"{msg}: {path}")
                     continue
-                repo_items[key] = {"key": key, "origin": "repo", "overrides_bundled": key in bundled, "repo_path": f".byte-stack/{kind}/{key}", "trigger": trigger}
+                repo_items[key] = {"key": key, "origin": "repo", "overrides_bundled": key in bundled, "repo_path": f".byte-stack/{kind}/{key}", "trigger": trigger, **({"truncated": True} if head_truncated else {})}
 
         catalog_out[kind] = [
             repo_items[k] if k in repo_items else {"key": bundled[k]["key"], "origin": "bundled", "overrides_bundled": False, "trigger": bundled[k]["trigger"]}
@@ -1182,7 +1184,7 @@ def _token_similarity(tokens_a, tokens_b):
     return shared, shared / len(tokens_a | tokens_b), shared / min(len(tokens_a), len(tokens_b))
 
 
-def evaluate_dedupe(candidate, exists, is_identical, rendered_bytes, rendered_text, ctx):
+def evaluate_dedupe(candidate, exists, is_identical, rendered_bytes, rendered_text, ctx, ref_trigger=""):
     """Compute explicit dedupe verdict, reason, blocking flags, and scoped similar_to warnings."""
     kind, key, cid = candidate["kind"], candidate["key"], candidate["id"]
     flags, reasons = [], []
@@ -1205,7 +1207,7 @@ def evaluate_dedupe(candidate, exists, is_identical, rendered_bytes, rendered_te
         flags.append("restates-steering")
         reasons.append(f"{matched_verbatim}/{len(cand_lines)} ({int(round(steering_ratio * 100))}%) of lines occur verbatim in steering files")
 
-    cand_trigger = _normalize_title_or_trigger(candidate["payload"].get("use_when", "")) if kind in ("playbooks", "workflows") else ""
+    cand_trigger = _normalize_title_or_trigger(candidate["payload"].get("use_when", "") if kind in ("playbooks", "workflows") else ref_trigger)
     cand_title = (
         _normalize_title_or_trigger(candidate["payload"].get("title", "")) if kind in ("playbooks", "workflows")
         else (_normalize_title_or_trigger(_extract_h1(rendered_text)) if kind == "references" and rendered_text else "")
@@ -1385,7 +1387,8 @@ def _plan_candidate(cand, repo, bmode_assets, capture_py, dedupe_ctx, update_ids
     rendered = _normalize_lf(cand["content"])
     rendered_bytes = rendered.encode("utf-8")
     exists, is_identical = existing_bytes is not None, existing_bytes == rendered_bytes
-    dedupe = evaluate_dedupe(cand, exists, is_identical, rendered_bytes, rendered, dedupe_ctx)
+    ref_trigger = _inspect_markdown_head(rendered, key, bmode_assets)[0] if kind == "references" else ""
+    dedupe = evaluate_dedupe(cand, exists, is_identical, rendered_bytes, rendered, dedupe_ctx, ref_trigger)
     existing_norm = existing_bytes.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n") if exists else ""
     diff = _unified_diff(existing_norm, rendered, target_rel, exists)
     line_endings_only = exists and not is_identical and existing_norm == rendered
@@ -1411,7 +1414,7 @@ def _plan_candidate(cand, repo, bmode_assets, capture_py, dedupe_ctx, update_ids
         **base_plan, "content_sha256": hashlib.sha256(rendered_bytes).hexdigest(), "dedupe_flags": dedupe["dedupe_flags"],
         "diff": diff, "executable": cand.get("executable", False), "expected_bytes": existing_bytes, "parts": parts,
         "reason": plan_reason, "rendered": rendered, "similar_to": dedupe["similar_to"], "status": status,
-        "title": _extract_h1(rendered) if kind == "references" else "", "trigger": "", "verdict": dedupe["verdict"],
+        "title": _extract_h1(rendered) if kind == "references" else "", "trigger": ref_trigger, "verdict": dedupe["verdict"],
         "verdict_reason": verdict_reason, "will_write": will_write,
     }, None
 
@@ -1561,13 +1564,21 @@ def cmd_schema():
     return 0
 
 
+class _Parser(argparse.ArgumentParser):
+    def error(self, message):
+        """Report a usage error through the output boundary, without the offending argument value."""
+        message = re.sub(r"(: invalid [\w ]+ value|: invalid choice|unrecognized arguments):.*", r"\1", message, flags=re.S)
+        _emit(f"{self.prog}: error: {message} (run with --help)", _build_sanitizer(), stream=sys.stderr)
+        raise SystemExit(2)
+
+
 def build_parser():
-    top_common = argparse.ArgumentParser(add_help=False)
+    top_common = _Parser(add_help=False)
     top_common.add_argument("--bmode", type=Path, default=None, help="Path to installed bmode skill directory (default: sibling ../bmode)")
-    sub_common = argparse.ArgumentParser(add_help=False)
+    sub_common = _Parser(add_help=False)
     sub_common.add_argument("--bmode", type=Path, default=argparse.SUPPRESS, help="Path to installed bmode skill directory (default: sibling ../bmode)")
 
-    parser = argparse.ArgumentParser(description=__doc__, parents=[top_common])
+    parser = _Parser(description=__doc__, parents=[top_common])
     sub = parser.add_subparsers(dest="command", required=True)
 
     inv_p = sub.add_parser("inventory", parents=[sub_common], help="Scan tracked repository files and .byte-stack/ catalogs (read-only)")

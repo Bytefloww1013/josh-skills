@@ -20,7 +20,7 @@ Build a JSON document matching `references/extract-candidates.schema.json` (`ext
 - `playbooks` and `workflows` carry `payload` (the `capture_playbook.py` fields minus `schema_version`, `kind`, and `key`: `title`, `steps`, `verification`, optional `prerequisites`/`guardrails`, and required `use_when` for `playbooks`). Keys must be lowercase kebab-case ending in `.md`.
 - `references` carry LF Markdown `content` (max 64 KiB) with a lowercase kebab-case `.md` key.
 - `scripts` carry LF `content` (max 64 KiB) with a lowercase key (optional extension) and optional `executable: true`.
-- Keep secrets, tokens, private keys, and machine-local home paths (`/home/<user>`, `/Users/<user>`, `C:\Users\<user>`, also under another root such as `/var/home/<user>` or `/mnt/c/Users/<user>`, including non-ASCII user names, with or without a trailing slash) out of every field (`payload`, `content`, `key`, `rationale`, `provenance`). All strings must be valid UTF-8 (no lone surrogates).
+- Keep secrets, tokens, private keys, and machine-local home paths (`C:\Users\<user>`, or an absolute path with a `home/<user>` or `Users/<user>` segment at any depth, such as `/home/<user>`, `/var/home/<user>` or `/mnt/c/Users/<user>`; non-ASCII user names and paths without a trailing slash count) out of every field (`payload`, `content`, `key`, `rationale`, `provenance`). An absolute route such as `/home/about` reads as a home path and is rejected: write it another way. An `http` or `https` URL whose path has such a segment is accepted in `references` and `scripts`; `playbooks` and `workflows` inherit the stricter check in `capture_playbook.py`, which rejects it. All strings must be valid UTF-8 (no lone surrogates).
 
 ## Provenance requirements
 
@@ -47,6 +47,8 @@ Every candidate must cite at least one tracked, non-excluded regular file in `pr
 Flags are single-purpose: `--force <id>` authorizes replacing a differing file only and never bypasses `restates-steering`, `duplicates-catalog`, or `overrides-bundled`. When a candidate both differs from an existing file and triggers a dedupe block, preview reports both conflicts and the diff, and writing requires both flags.
 
 Soft `similar_to` warnings (capped at 3) compare playbooks/workflows against playbook/workflow titles and triggers, references against reference titles, and non-script candidates against steering files (including bullet-normalized line overlap). Scripts emit no `similar_to` noise.
+
+A repo catalog entry in the inventory with `"truncated": true` was listed from the first 4 KiB of its file only. Run `assets.py resolve <kind> <key>` before you rely on it; the resolver reads the whole file.
 
 ## Preview, approval, and write flow
 
