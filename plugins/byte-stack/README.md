@@ -6,9 +6,9 @@ Run **bmode** to route a task to an engineering playbook. The plugin also includ
 
 | Host | Install | Invoke |
 | --- | --- | --- |
-| Claude Code | `claude plugin marketplace add Bytefloww1013/josh-skills`, then `claude plugin install byte-stack@josh-skills` | `/byte-stack:bmode`, `/byte-stack:capture-playbook`, and `/byte-stack:init` |
-| Antigravity CLI | `agy plugin install /path/to/josh-skills/plugins/byte-stack` | Select `bmode`, `capture-playbook`, or `init` from `/skills`. |
-| Codex CLI | `codex plugin marketplace add /path/to/josh-skills`, then `codex plugin add byte-stack@josh-skills` | Select `$byte-stack:bmode`, `$byte-stack:capture-playbook`, or `$byte-stack:init` from the skill picker. Codex also exposes init as the plugin's onboarding skill on supported clients. |
+| Claude Code | `claude plugin marketplace add Bytefloww1013/josh-skills`, then `claude plugin install byte-stack@josh-skills` | `/byte-stack:bmode`, `/byte-stack:capture-playbook`, `/byte-stack:extract-assets`, and `/byte-stack:init` |
+| Antigravity CLI | `agy plugin install /path/to/josh-skills/plugins/byte-stack` | Select `bmode`, `capture-playbook`, `extract-assets`, or `init` from `/skills`. |
+| Codex CLI | `codex plugin marketplace add /path/to/josh-skills`, then `codex plugin add byte-stack@josh-skills` | Select `$byte-stack:bmode`, `$byte-stack:capture-playbook`, `$byte-stack:extract-assets`, or `$byte-stack:init` from the skill picker. Codex also exposes init as the plugin's onboarding skill on supported clients. |
 | Individual skills | `npx skills add Bytefloww1013/josh-skills --skill bmode` | Select the installed skill. Add init separately to scaffold a checkout. |
 
 For a branch under development, use its absolute checkout path in either marketplace add command. Start or reload the host session after installation as required. In each target repository run init explicitly to create tracked placeholders for the four asset directories. Repeating init preserves user files. No installation or session hook scaffolds a repository.
@@ -61,6 +61,21 @@ python3 "<bmode directory>/scripts/capture_playbook.py" validate .byte-stack/pla
 
 Repeat identical runs are no-ops (`unchanged`). Clean updates to unmodified generated files require `--update`. Manually edited or hand-authored files exit `3` with a diff unless `--force` is passed explicitly. See the [capture decision](../../docs/adr/byte-stack-capture.md).
 
+## Extract repository assets
+
+Invoke `extract-assets` to scan the calling Git worktree and propose `.byte-stack/` assets (`playbooks/`, `workflows/`, `references/`, and `scripts/`) from CI pipelines, task runners, scripts, steering files, ADRs, directives, quality configs, and Git hooks.
+
+The skill separates read-only scanning (`inventory`) from validated previews and writes (`write`) via a JSON Schema (`schema`). From the target checkout:
+
+```sh
+python3 "<extract-assets directory>/scripts/extract_assets.py" inventory
+python3 "<extract-assets directory>/scripts/extract_assets.py" schema
+python3 "<extract-assets directory>/scripts/extract_assets.py" write --stdin --dry-run --json < candidates.json
+python3 "<extract-assets directory>/scripts/extract_assets.py" write --stdin --approve playbooks/release-notes.md --json < candidates.json
+```
+
+`inventory` skips symlinks, submodules, vendored/build directories, secret-named files, and machine-local files without reading them. `write` checks tracked provenance, deduplicates against bundled `byte-stack` catalogs, existing `.byte-stack/` files, and steering files, delegates `playbooks/` and `workflows/` to `capture_playbook.py`, and writes `references/` and `scripts/` atomically without adding managed markers. Non-`dry-run` writes require explicit per-ID `--approve <id>` (plus `--update`, `--override-bundled`, or `--force` for non-`new` verdicts). See the [extract decision](../../docs/adr/byte-stack-extract.md).
+
 ## Host differences
 
 Claude Code loads the byte-agent delegate and its handoff guard. Antigravity exposes byte-agent for delegation. Codex skills use the host's available delegation mechanism and pass the worktree and installed skill path in the brief. All hosts can invoke byte-handoff manually. Automatic handoff uses Claude Code's transcript, compaction settings and hook response format and is registered only on that host.
@@ -73,6 +88,6 @@ The pre-push review skill is `review-loop`. Delegation inherits the host default
 
 Claude Code derives the version from Git. Antigravity and Codex use explicit manifest versions. Keep the three skill sets in one source directory. Codex declares its own hook list to prevent discovery of the Claude Code hooks. See [Codex plugin packaging](https://developers.openai.com/plugins/build/plugins) and the [asset discovery decision](../../docs/adr/byte-stack-assets.md).
 
-Run `python3 tests/test_byte_stack_distribution.py`, `python3 tests/test_byte_stack_assets.py`, `python3 tests/test_byte_stack_capture.py`, `python3 plugins/byte-stack/hooks/check-handoff-guard.py`, and `python3 tests/test_antigravity_plugin_install.py` from the source checkout.
+Run `python3 tests/test_byte_stack_distribution.py`, `python3 tests/test_byte_stack_assets.py`, `python3 tests/test_byte_stack_capture.py`, `python3 -I tests/test_byte_stack_extract.py`, `python3 plugins/byte-stack/hooks/check-handoff-guard.py`, and `python3 tests/test_antigravity_plugin_install.py` from the source checkout.
 
 For an opt-in end-to-end check, run `python3 tests/check_byte_stack_claude_live.py` with a signed-in Claude Code CLI. It uses four model turns, installs into a temporary profile, and verifies tool results for both playbook origins and two init runs.
