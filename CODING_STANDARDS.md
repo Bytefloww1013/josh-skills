@@ -8,7 +8,9 @@ A **safety guard** is code that keeps secrets, home paths, unsafe paths or bad i
 
 ### Narrowing a guard ships with hostile-neighbour tests
 
-A change that lets more input through a guard adds a test for a hostile neighbour of each newly allowed form: the same form with a shell separator after it (`|`, `;`, `&&`), with an empty or missing part (an empty host, no scheme), with an escaped or encoded value, and with an older sibling module that lacks the change. Each test proves the neighbour is still rejected.
+A change that lets more input through a guard adds, for each newly allowed form, a test that a hostile neighbour of that form is still rejected. Pick the neighbours the form allows, for example the form followed by a shell separator (`|`, `;`, `&&`), the form with an empty or missing part (an empty host, no scheme), or the form with an escaped or encoded value.
+
+When the guard's change relies on a sibling module (a constant or helper added in another script), add a test that runs it against the sibling without that change and shows it still works or fails with a clear message.
 
 Why: in #29 an exemption for `https://` URLs passed its tests and let `curl https://host/x|/home/<name>/bin/` through, and it broke the skill against an older `bmode`.
 

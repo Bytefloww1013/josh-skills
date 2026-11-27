@@ -160,7 +160,7 @@ class AssetTests(unittest.TestCase):
         brief = (SKILLS / "bmode/references/briefs/reviewer.md").read_text(encoding="utf-8")
         rules = brief.split("## Reviewer rules", 1)[1].split("\n## ", 1)[0]
         numbers = [int(line.split(".", 1)[0]) for line in rules.splitlines() if line[:1].isdigit()]
-        self.assertEqual(numbers, list(range(1, len(numbers) + 1)))
+        self.assertEqual(numbers, list(range(1, 7)))
         self.assertIn("CODING_STANDARDS.md", rules)
         data = self.temp / "values.json"
         data.write_text(json.dumps({"TASK_ID": "fixture", "RUN_DIR": str(self.temp), "REPO_ROOT": str(self.repo), "BASE": "base",
