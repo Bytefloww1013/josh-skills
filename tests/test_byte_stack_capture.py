@@ -298,6 +298,26 @@ class CapturePlaybookTests(unittest.TestCase):
         expected_wf = (self.local / "workflows/checks/preflight.md").resolve()
         self.assertEqual(resolved_wf, f"repo\t{expected_wf}")
 
+    def test_progressive_disclosure_and_skill_budget(self):
+        bmode_lines = (SKILLS / "bmode/SKILL.md").read_text(encoding="utf-8").splitlines()
+        self.assertLessEqual(len(bmode_lines), 70)
+
+        skill_md = SKILLS / "capture-playbook/SKILL.md"
+        self.assertTrue(skill_md.is_file())
+        skill_lines = skill_md.read_text(encoding="utf-8").splitlines()
+        desc = next((line.removeprefix("description:").strip() for line in skill_lines if line.startswith("description:")), "")
+        self.assertTrue(desc)
+        self.assertLessEqual(len(desc), 140)
+        self.assertIn("disable-model-invocation: true", skill_lines)
+
+        openai_yaml = SKILLS / "capture-playbook/agents/openai.yaml"
+        self.assertTrue(openai_yaml.is_file())
+        self.assertIn("allow_implicit_invocation: false", openai_yaml.read_text(encoding="utf-8"))
+
+        self.assertTrue((SKILLS / "bmode/references/capture-playbook.md").is_file())
+        self.assertIn("bundled\t", self.assets("resolve", "references", "capture-playbook.md").stdout)
+        self.assertTrue((ROOT / "docs/adr/byte-stack-capture.md").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

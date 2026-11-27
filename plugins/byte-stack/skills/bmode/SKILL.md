@@ -49,7 +49,13 @@ Apply the relevant principle skills when their triggers match. Read each availab
 
 ## Helpers
 
-For a subsystem or ownership question, use how. For effects on callers, use blast-radius. Use architect when the implementation hinges on an unresolved design choice. Use docs-add for a new procedure or reference and docs-review to check claims against code. Use figure-it-out to design an uncovered multi-part workflow. Each helper may run directly from the host. Invoke optional companion skills only when installed and relevant. On hosts without a dedicated Skill tool, read the selected skill’s installed SKILL.md. Use the host’s read, search and delegation equivalents.
+For a subsystem or ownership question, use how. For effects on callers, use blast-radius. Use architect when the implementation hinges on an unresolved design choice. Use docs-add for a new procedure or reference and docs-review to check claims against code. Use figure-it-out to design an uncovered multi-part workflow. Use capture-playbook to save a proven repo workflow into `.byte-stack/`. Each helper may run directly from the host. Invoke optional companion skills only when installed and relevant. On hosts without a dedicated Skill tool, read the selected skill’s installed SKILL.md. Use the host’s read, search and delegation equivalents.
+
+## Capture
+
+After a verified, non-read-only task in a Git worktree uses repeatable repo-specific choreography absent from existing playbooks, append one line: `Reusable repo workflow detected (<key>): save to .byte-stack/<kind>/<key>? (y/N)`.
+Never prompt on investigations, one-offs, unverified or interrupted runs, `byte-agent` delegates, headless runs, or when `.byte-stack/.no-capture-prompt` exists.
+Only after the user opts in, resolve `references/capture-playbook.md` and run `scripts/capture_playbook.py` (`--dry-run` first).
 
 ## Delegation
 
