@@ -1741,10 +1741,34 @@ class ExtractAssetsTests(unittest.TestCase):
                 out = self.extract("write", "--stdin", "--dry-run", code=1, stdin_text=json.dumps(envelope(cand)))
                 self.assertIn("machine-local", out.stderr + out.stdout)
 
-        # A web URL whose path has a home segment is ordinary documentation.
-        linked = make_reference_candidate(content="# Notes\n\nRead https://example.test/home/docs/index first.\n")
-        self.extract("write", "--stdin", "--dry-run", stdin_text=json.dumps(envelope(linked)))
+        # A web URL whose path has a home segment is ordinary documentation, for every kind.
+        url = "https://example.test/home/docs/index/"
+        for label, cand in (
+            ("reference", make_reference_candidate(content="# Notes\n\nRead " + url + " first.\n")),
+            ("script", make_script_candidate(content="#!/bin/sh\n# See " + url + "\npython3 -m unittest\n")),
+            ("playbook", make_playbook_candidate(steps=["Read " + url + " first", "Tag the verified release"])),
+            ("workflow", make_workflow_candidate(steps=["Read " + url + " before pushing changes"])),
+        ):
+            with self.subTest(kind=label, text="web url"):
+                self.extract("write", "--stdin", "--dry-run", stdin_text=json.dumps(envelope(cand)))
         self.assertFalse(self.local.exists())
+
+        # A withheld signal is counted on its file, and that line can still be cited.
+        self.add_tracked_file(
+            ".github/workflows/ci.yml",
+            "name: CI\non: [push]\njobs:\n  test:\n    steps:\n      - run: ls /home/runner/work\n      - run: pytest -q\n",
+        )
+        inv = json.loads(self.extract("inventory").stdout)
+        ci = next(f for f in inv["categories"]["ci"] if f["path"] == ".github/workflows/ci.yml")
+        self.assertEqual(ci["signals_withheld"], 1)
+        self.assertNotIn("/home/runner", json.dumps(inv))
+        clean = next(f for f in inv["categories"]["task_runners"] if f["path"] == "Makefile")
+        self.assertNotIn("signals_withheld", clean)
+        by_line = make_reference_candidate(provenance=[{"path": ".github/workflows/ci.yml", "line": 6}])
+        self.extract("write", "--stdin", "--dry-run", stdin_text=json.dumps(envelope(by_line)))
+        by_text = make_reference_candidate(provenance=[{"path": ".github/workflows/ci.yml", "line": 6, "command": "ls /home/runner/work"}])
+        out = self.extract("write", "--stdin", "--dry-run", code=1, stdin_text=json.dumps(envelope(by_text)))
+        self.assertIn("machine-local", out.stderr + out.stdout)
 
     def test_provenance_round_trip_for_continuations_dotted_scripts_just_and_toml_comments(self):
         self.add_tracked_file("CONTRIBUTING.md", "# Contributing\n\n```sh\ngit status \\\n  --short\nmake test\n```\n")

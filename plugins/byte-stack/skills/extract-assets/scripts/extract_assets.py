@@ -41,7 +41,6 @@ _WS_RE = re.compile(r"[ \t\r\n]*")
 _ABS_PATH_RE = re.compile(r"(?<![\w.])(?<!:/)(?<!<repo>)(?<!<bmode>)(?<!<cwd>)/(?!/)[^\s'\"`<>|;,)\]}]+")
 _HOME_SEGMENT_RE = re.compile(r"/(?:home|Users)/[^/\\]")
 _WIN_HOME_RE = re.compile(r"[A-Za-z]:\\Users\\[^\s/\\'\"`<>|;,)\]}]+(?:\\[^\s'\"`<>|;,)\]}]*)?")
-_WEB_URL_RE = re.compile(r"\bhttps?://[^\s'\"`<>]+")
 LINK_FALLBACK_ERRNOS = frozenset(
     code for name in ("EPERM", "EOPNOTSUPP", "ENOTSUP", "EXDEV")
     for code in (getattr(errno, name, None),) if code is not None
@@ -270,7 +269,7 @@ def _check_utf8(label, text, errors):
 def _check_safety_patterns(bmode_capture, label, text, errors, tracked_path=False):
     """Apply capture's guards plus the absolute home-path rule; a tracked path is relative, so only the latter."""
     capture_local = () if (bmode_capture is None or tracked_path) else bmode_capture.LOCAL_PATH_PATTERNS
-    without_urls = _WEB_URL_RE.sub(" ", text)
+    without_urls = text if bmode_capture is None else bmode_capture.WEB_URL_PATTERN.sub(" ", text)
     if _has_local_path(text) or any(p.search(without_urls) for p in capture_local):
         errors.append(f"{label} must not contain a machine-local home path")
     if bmode_capture is not None and any(p.search(text) for p in bmode_capture.SECRET_PATTERNS):
@@ -853,7 +852,7 @@ def cmd_inventory(args):
         bump_exclusion("sensitive_signals_dropped", dropped)
         categories[bucket].append({
             "bytes": st.st_size, "bytes_read": bytes_read, "lines": len(text.splitlines()),
-            "path": rel_path, "signals": signals, "truncated": file_truncated,
+            "path": rel_path, "signals": signals, "truncated": file_truncated, **({"signals_withheld": dropped} if dropped else {}),
         })
 
     for bucket in categories:
