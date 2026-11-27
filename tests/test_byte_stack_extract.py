@@ -1714,9 +1714,11 @@ class ExtractAssetsTests(unittest.TestCase):
     def test_argument_errors_quoted_root_deep_home_paths_and_web_urls(self):
         # A usage error does not echo a credential-shaped argument.
         token = "ghp_" + "A" * 24
-        out = self.extract("inventory", "--max-bytes", token, code=2)
-        self.assertNotIn(token, out.stderr + out.stdout)
-        self.assertIn("error", out.stderr)
+        for args in (("--max-bytes", token), ("--max=" + token,), ("--pretty=" + token,), (token,)):
+            with self.subTest(args=args[0].replace(token, "TOKEN")):
+                out = self.extract("inventory", *args, code=2)
+                self.assertNotIn(token, out.stderr + out.stdout)
+                self.assertIn("error", out.stderr)
 
         # The repository root is redacted inside typographic quotes too, and a home
         # directory is caught at any depth of an absolute path.

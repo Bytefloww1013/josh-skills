@@ -1566,8 +1566,10 @@ def cmd_schema():
 
 class _Parser(argparse.ArgumentParser):
     def error(self, message):
-        """Report a usage error through the output boundary, without the offending argument value."""
-        message = re.sub(r"(: invalid [\w ]+ value|: invalid choice|unrecognized arguments):.*", r"\1", message, flags=re.S)
+        """Report a usage error through the output boundary, with every argument value taken out of the message."""
+        values = {part for arg in sys.argv[1:] if arg not in self._option_string_actions for part in (arg, arg.split("=", 1)[-1])}
+        for value in sorted((v for v in values if len(v) >= 4), key=len, reverse=True):
+            message = message.replace(value, "<value>")
         _emit(f"{self.prog}: error: {message} (run with --help)", _build_sanitizer(), stream=sys.stderr)
         raise SystemExit(2)
 
