@@ -1,12 +1,15 @@
 """Find repository-owned assets and the defaults shipped by an installed skill."""
 import argparse
+import json
 import os
 from pathlib import Path
+import re
 import stat
 import subprocess
 
 KINDS = ("playbooks", "workflows", "references", "scripts")
 SKILL = Path(__file__).resolve().parents[1]
+FRONTMATTER_KEY = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 def checkout(cwd):
@@ -40,6 +43,60 @@ def roots(cwd, kind, owner):
     yield "bundled", owner / kind
 
 
+def validate_key(kind, key):
+    """Validate an asset key and return its path segments."""
+    parts = key.split("/")
+    if any(not p.isprintable() or p in ("", ".", "..") or "\\" in p or ":" in p for p in parts):
+        raise ValueError(f"invalid asset key: {key}")
+    if kind in ("playbooks", "workflows") and not key.endswith(".md"):
+        raise ValueError(f"expected a Markdown key: {key}")
+    return parts
+
+
+def parse_frontmatter(content, path="<asset>"):
+    """Parse flat scalar YAML frontmatter (`key: value`) and return (meta, body)."""
+    lines = content.splitlines()
+    if not lines or lines[0] != "---":
+        return {}, content
+    end_idx = None
+    for idx in range(1, len(lines)):
+        if lines[idx] == "---":
+            end_idx = idx
+            break
+    if end_idx is None:
+        raise ValueError(f"unterminated frontmatter: {path}")
+    meta = {}
+    for line in lines[1:end_idx]:
+        if not line:
+            continue
+        if line.startswith((" ", "\t", "-")) or ":" not in line:
+            raise ValueError(f"invalid frontmatter line: {path}")
+        raw_key, raw_val = line.split(":", 1)
+        key = raw_key.strip()
+        if not FRONTMATTER_KEY.fullmatch(key):
+            raise ValueError(f"invalid frontmatter key: {path}")
+        if key in meta:
+            raise ValueError(f"duplicate frontmatter key '{key}': {path}")
+        val = raw_val.strip()
+        if val.startswith('"'):
+            if len(val) < 2 or not val.endswith('"'):
+                raise ValueError(f"invalid frontmatter string: {path}")
+            try:
+                decoded = json.loads(val)
+            except ValueError as error:
+                raise ValueError(f"invalid frontmatter string: {path}") from error
+            if not isinstance(decoded, str):
+                raise ValueError(f"invalid frontmatter string: {path}")
+            val = decoded
+        elif val.startswith("'"):
+            if len(val) < 2 or not val.endswith("'"):
+                raise ValueError(f"invalid frontmatter string: {path}")
+            val = val[1:-1].replace("''", "'")
+        meta[key] = val
+    body = "\n".join(lines[end_idx + 1 :])
+    return meta, body
+
+
 def inspect_file(path, kind):
     if not stat.S_ISREG(path.stat().st_mode):
         raise ValueError(f"expected regular file: {path}")
@@ -50,18 +107,22 @@ def inspect_file(path, kind):
     content = path.read_text(encoding="utf-8")
     if not content.strip():
         raise ValueError(f"empty asset: {path}")
-    for line in content.splitlines():
+    meta, body = parse_frontmatter(content, path)
+    if not body.strip():
+        raise ValueError(f"empty asset: {path}")
+    fm_trigger = meta.get("use-when", "").strip()
+    body_trigger = ""
+    for line in body.splitlines():
         if line.startswith("Use when: "):
-            return line.removeprefix("Use when: ").strip()
-    return ""
+            body_trigger = line.removeprefix("Use when: ").strip()
+            break
+    if fm_trigger and body_trigger and fm_trigger != body_trigger:
+        raise ValueError(f"conflicting trigger descriptions: {path}")
+    return fm_trigger or body_trigger
 
 
 def resolve(cwd, kind, key, owner=SKILL):
-    parts = key.split("/")
-    if any(not p.isprintable() or p in ("", ".", "..") or "\\" in p or ":" in p for p in parts):
-        raise ValueError(f"invalid asset key: {key}")
-    if kind in ("playbooks", "workflows") and not key.endswith(".md"):
-        raise ValueError(f"expected a Markdown key: {key}")
+    parts = validate_key(kind, key)
     for source, base in roots(cwd, kind, owner):
         path = checked(base, parts)
         try:
