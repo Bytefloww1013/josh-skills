@@ -5,7 +5,7 @@
     "name": "Bytefloww1013"
   },
   "repository": "https://github.com/Bytefloww1013/josh-skills",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "skills": "./skills/",
   "hooks": [],
   "onboardingSkill": "./skills/init/SKILL.md"

@@ -1,6 +1,6 @@
 {
   "name": "byte-stack",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Repository playbooks, engineering principles, independent reviews and session handoffs. Run bmode to select a playbook or init to add repository-owned assets.",
   "author": {
     "name": "Bytefloww1013"
