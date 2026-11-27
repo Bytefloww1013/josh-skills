@@ -53,8 +53,8 @@ For a subsystem or ownership question, use how. For effects on callers, use blas
 
 ## Capture
 
-After a verified, non-read-only task in a Git worktree uses repeatable repo-specific choreography absent from existing playbooks, append one line: `Reusable repo workflow detected (<key>): save to .byte-stack/<kind>/<key>? (y/N)`.
-Never prompt on investigations, one-offs, unverified or interrupted runs, `byte-agent` delegates, headless runs, or when `.byte-stack/.no-capture-prompt` exists.
+After a verified task in a Git worktree runs repeatable repo-specific steps or checks absent from existing playbooks, append one line: `Reusable repo workflow detected (<key>): save to .byte-stack/<kind>/<key>? (y/N)`.
+Never prompt on read-only Q&A (`investigation.md`), one-offs, unverified or interrupted runs, `byte-agent` delegates, headless runs, or when `.byte-stack/.no-capture-prompt` exists.
 Only after the user opts in, resolve `references/capture-playbook.md` and run `scripts/capture_playbook.py` (`--dry-run` first).
 
 ## Delegation

@@ -23,6 +23,7 @@ MANAGED_BY = "byte-stack/capture"
 ALLOWED_KINDS = ("playbooks", "workflows")
 SCHEMA_PATH = HERE.parent / "references" / "capture-payload.schema.json"
 KEY_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*\.md$")
+LINE_BREAK = re.compile(r"[\n\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]")
 SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 
 ALLOWED_PAYLOAD_KEYS = {
@@ -80,7 +81,7 @@ def _validate_text_field(label, value, min_len, max_len, errors, *, forbid_delim
     if not isinstance(value, str):
         errors.append(f"{label} must be a string")
         return
-    if "\n" in value or "\r" in value:
+    if LINE_BREAK.search(value):
         errors.append(f"{label} must be a single line")
         return
     stripped = value.strip()
@@ -121,7 +122,7 @@ def validate_payload(data):
         key = data["key"]
         if not isinstance(key, str):
             errors.append("key must be a string")
-        elif "\n" in key or "\r" in key or "---" in key:
+        elif LINE_BREAK.search(key) or "---" in key:
             errors.append("key must be a single line without '---'")
         elif not (4 <= len(key) <= 120) or not KEY_PATTERN.fullmatch(key):
             errors.append("key must be lowercase kebab-case path ending in .md (4..120 chars)")
@@ -338,6 +339,8 @@ def validate_playbook_text(text, *, expected_kind=None, expected_key=None):
     elif not verify_items:
         errors.append("'## Verification' section must contain at least one item")
 
+    if use_when:
+        _check_safety_patterns("use-when", use_when, errors)
     _check_safety_patterns("body", body, errors)
     return errors
 
@@ -422,6 +425,7 @@ def plan_write(existing_text, rendered, *, target_label, update, force):
 def apply_write(repo, parts, kind, rendered):
     """Atomically write rendered content after checking every path segment for symlinks."""
     target = checked(repo, [".byte-stack", kind, *parts])
+    existing_mode = stat.S_IMODE(target.lstat().st_mode) if target.exists() else None
     target.parent.mkdir(parents=True, exist_ok=True)
     target = checked(repo, [".byte-stack", kind, *parts])
     fd, tmp_name = tempfile.mkstemp(prefix=".capture-", suffix=".tmp", dir=target.parent)
@@ -429,6 +433,13 @@ def apply_write(repo, parts, kind, rendered):
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(rendered)
+        if existing_mode is not None:
+            mode = existing_mode
+        else:
+            umask = os.umask(0)
+            os.umask(umask)
+            mode = 0o666 & ~umask
+        os.chmod(tmp_path, mode)
         os.replace(tmp_path, target)
     except Exception:
         tmp_path.unlink(missing_ok=True)

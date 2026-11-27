@@ -5,7 +5,7 @@ Capture proven, repository-local procedures into `.byte-stack/` without bloating
 ## Reusability gate
 
 Skip capture silently if ANY hard disqualifier holds:
-1. The run used a read-only or meta playbook (`investigation.md`, `pause-safely.md`, `session-pickup.md`, `worktree-cleanup.md`).
+1. The run used a read-only Q&A (`investigation.md`) or meta playbook (`pause-safely.md`, `session-pickup.md`, `worktree-cleanup.md`).
 2. An existing bundled or `.byte-stack/` playbook already covered the procedure with no repo-specific delta.
 3. The task failed, was interrupted, or verification checks did not pass.
 4. The session is outside a Git worktree, running as a `byte-agent` delegate, running non-interactively, or `.byte-stack/.no-capture-prompt` exists (or the user opted out earlier).

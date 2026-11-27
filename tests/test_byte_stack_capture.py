@@ -1,6 +1,7 @@
 """Run from any directory with python3 tests/test_byte_stack_capture.py."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -121,6 +122,7 @@ class CapturePlaybookTests(unittest.TestCase):
             (json.dumps(sample_payload(key="missing-extension")), "kebab-case"),
             (json.dumps({k: v for k, v in sample_payload().items() if k != "use_when"}), "use_when is required"),
             (json.dumps(sample_payload(title="Line1\nLine2")), "single line"),
+            (json.dumps(sample_payload(use_when="Trigger with\x0bvertical tab")), "single line"),
             (json.dumps(sample_payload(use_when="Trigger --- injected delimiter")), "delimiter"),
             (json.dumps(sample_payload(steps=["Run /home/alice/project/script.sh"])), "machine-local home path"),
             (json.dumps(sample_payload(steps=["Run /Users/alice/project/script.sh"])), "machine-local home path"),
@@ -150,6 +152,10 @@ class CapturePlaybookTests(unittest.TestCase):
         self.assertEqual(first["status"], "create")
         target = self.local / "playbooks/release-notes.md"
         self.assertTrue(target.is_file())
+        umask = os.umask(0)
+        os.umask(umask)
+        self.assertEqual(target.stat().st_mode & 0o777, 0o666 & ~umask)
+        target.chmod(0o640)
         stat_before = (target.stat().st_mode, target.stat().st_mtime_ns, target.read_bytes())
 
         second = json.loads(self.capture("write", "--stdin", "--json", stdin_text=raw).stdout)
@@ -157,6 +163,11 @@ class CapturePlaybookTests(unittest.TestCase):
         self.assertEqual(second["diff"], "")
         stat_after = (target.stat().st_mode, target.stat().st_mtime_ns, target.read_bytes())
         self.assertEqual(stat_before, stat_after)
+
+        # Clean update preserves custom file permissions (0o640).
+        updated = json.dumps(sample_payload(steps=["Check tag", "Generate notes"]))
+        self.capture("write", "--stdin", "--update", stdin_text=updated)
+        self.assertEqual(target.stat().st_mode & 0o777, 0o640)
 
     def test_managed_clean_update_requires_flag(self):
         self.capture("write", "--stdin", stdin_text=json.dumps(sample_payload()))
@@ -219,6 +230,7 @@ class CapturePlaybookTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(valid_without_hash.encode("utf-8")).hexdigest(), GOLDEN_SHA256)
 
         bad_cases = [
+            (content.replace("Prepare release notes for a tagged version.", "Prepare release notes for /home/alice/repo/"), "machine-local home path"),
             (content + "tamper\n", "content-sha256 mismatch"),
             (content.replace("managed-by: byte-stack/capture\n", "managed-by: byte-stack/capture\nextra: x\n"), "unknown frontmatter key"),
             (content.replace("schema-version: 1\n", "schema-version: 2\n"), "schema-version"),

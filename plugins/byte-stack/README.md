@@ -49,7 +49,7 @@ The final example checks `.byte-stack/references/docs-review/criteria.md`, then 
 
 ## Capture a verified workflow
 
-During a `bmode` run, if a verified, non-read-only task uncovers repeatable repo-specific choreography not covered by an existing playbook, `bmode` offers a single-line `y/N` prompt to save it into `.byte-stack/playbooks/` or `.byte-stack/workflows/`. Create `.byte-stack/.no-capture-prompt` to disable automatic prompts in a repository. You can also invoke `capture-playbook` explicitly after a verified run.
+During a `bmode` run, if a verified task uncovers repeatable repo-specific choreography not covered by an existing playbook, `bmode` offers a single-line `y/N` prompt to save it into `.byte-stack/playbooks/` or `.byte-stack/workflows/`. Create `.byte-stack/.no-capture-prompt` to disable automatic prompts in a repository. You can also invoke `capture-playbook` explicitly after a verified run.
 
 Captured files use flat YAML frontmatter (`schema-version: 1`, `kind`, `key`, `use-when`, `managed-by`, `content-sha256`), which `assets.py` reads alongside legacy `Use when: ` lines. From the target checkout, preview, write, and validate using the deterministic CLI inside the installed `bmode` skill:
 
