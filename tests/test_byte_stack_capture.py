@@ -127,6 +127,8 @@ class CapturePlaybookTests(unittest.TestCase):
             (json.dumps(sample_payload(steps=["Run /home/alice/project/script.sh"])), "machine-local home path"),
             (json.dumps(sample_payload(steps=["Run /Users/alice/project/script.sh"])), "machine-local home path"),
             (json.dumps(sample_payload(steps=[r"Run C:\Users\alice\script.ps1"])), "machine-local home path"),
+            (json.dumps(sample_payload(steps=["curl https://example.test/health|/home/alice/bin/check"])), "machine-local home path"),
+            (json.dumps(sample_payload(steps=["Read https://example.test/home/alice/docs/"])), "machine-local home path"),
             (json.dumps(sample_payload(steps=["Export token ghp_1234567890abcdefghij"])), "secret"),
             (json.dumps(sample_payload(steps=["Export key sk-1234567890abcdefghij"])), "secret"),
             (json.dumps(sample_payload(steps=["Export AKIAIOSFODNN7EXAMPLE for S3"])), "secret"),
