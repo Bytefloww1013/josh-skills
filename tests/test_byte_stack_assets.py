@@ -184,6 +184,7 @@ class AssetTests(unittest.TestCase):
                                            "--values", data], self.nested)
                 self.assertIn(rule, output)
                 self.assertIn(str(self.temp), output.split(rule, 1)[1].split("\n", 1)[0])
+                self.assertIn("exact command that reruns it", output)
 
 
 if __name__ == "__main__":
