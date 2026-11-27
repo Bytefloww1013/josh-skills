@@ -111,8 +111,14 @@ class CapturePlaybookTests(unittest.TestCase):
         benign = sample_payload(steps=["Run task-12345678901234567890 verification suite"])
         self.capture("write", "--stdin", "--dry-run", stdin_text=json.dumps(benign))
 
+        # A web URL whose path has a home-like segment is ordinary documentation.
+        linked = sample_payload(steps=["Read https://example.test/home/docs/index/ before tagging"])
+        self.capture("write", "--stdin", "--dry-run", stdin_text=json.dumps(linked))
+
         invalid_cases = [
             ("{not json", "invalid payload JSON"),
+            (json.dumps(sample_payload(steps=["Open https:///home/alice/project/ in a browser"])), "machine-local home path"),
+            (json.dumps(sample_payload(steps=["Open file:///home/alice/project/ in a browser"])), "machine-local home path"),
             (json.dumps(["not", "an", "object"]), "JSON object"),
             (json.dumps({k: v for k, v in sample_payload().items() if k != "steps"}), "missing required field: steps"),
             (json.dumps(sample_payload(extra="nope")), "unknown payload field"),
@@ -229,8 +235,13 @@ class CapturePlaybookTests(unittest.TestCase):
         valid_without_hash = content.replace(f"content-sha256: {GOLDEN_SHA256}\n", "")
         self.assertEqual(hashlib.sha256(valid_without_hash.encode("utf-8")).hexdigest(), GOLDEN_SHA256)
 
+        linked = sample_payload(key="linked-notes.md", title="Linked notes", steps=["Read https://example.test/home/docs/index/ before tagging"])
+        self.capture("write", "--stdin", stdin_text=json.dumps(linked))
+        self.capture("validate", self.local / "playbooks/linked-notes.md")
+
         bad_cases = [
             (content.replace("Prepare release notes for a tagged version.", "Prepare release notes for /home/alice/repo/"), "machine-local home path"),
+            (content.replace("Prepare release notes for a tagged version.", "Prepare release notes from file:///home/alice/repo/"), "machine-local home path"),
             (content.replace('use-when: Prepare release notes for a tagged version.', 'use-when: "Line1\\nLine2 trigger"'), "single line"),
             (content + "tamper\n", "content-sha256 mismatch"),
             (content.replace("managed-by: byte-stack/capture\n", "managed-by: byte-stack/capture\nextra: x\n"), "unknown frontmatter key"),
