@@ -20,16 +20,16 @@ Build a JSON document matching `references/extract-candidates.schema.json` (`ext
 - `playbooks` and `workflows` carry `payload` (the `capture_playbook.py` fields minus `schema_version`, `kind`, and `key`: `title`, `steps`, `verification`, optional `prerequisites`/`guardrails`, and required `use_when` for `playbooks`). Keys must be lowercase kebab-case ending in `.md`.
 - `references` carry LF Markdown `content` (max 64 KiB) with a lowercase kebab-case `.md` key.
 - `scripts` carry LF `content` (max 64 KiB) with a lowercase key (optional extension) and optional `executable: true`.
-- Keep secrets, tokens, private keys, and machine-local home paths (`/home/<user>`, `/Users/<user>`, `C:\Users\<user>`, with or without a trailing slash) out of every field (`payload`, `content`, `key`, `rationale`, `provenance`). All strings must be valid UTF-8 (no lone surrogates).
+- Keep secrets, tokens, private keys, and machine-local home paths (`/home/<user>`, `/Users/<user>`, `C:\Users\<user>`, including non-ASCII user names, with or without a trailing slash) out of every field (`payload`, `content`, `key`, `rationale`, `provenance`). All strings must be valid UTF-8 (no lone surrogates).
 
 ## Provenance requirements
 
 Every candidate must cite at least one tracked, non-excluded regular file in `provenance`:
 
 - `path`: repo-relative POSIX path from the inventory.
-- `command` (optional): command snippet matching at token boundaries in the cited file (whitespace-normalized; supports `\`-continued and multi-line commands). For `package.json` scripts, `inventory` emits the command text and dotted key (`scripts.<name>`) separately.
-- `key` (optional): dotted configuration key whose segments match at token boundaries in the cited file.
-- `line` (optional): 1-based line number within the cited file; when combined with `command` or `key`, the command (or dotted key leaf) must appear at that line.
+- `command` (optional): for structured files (`package.json`, JSON, TOML/INI/CFG, Makefile/Justfile, YAML workflows/hooks), must equal an extracted `command` signal as printed by `inventory` (whitespace-normalized; supports `\` continuations and Make recipe prefix stripping). For other files (prose, shell, source), must appear verbatim on one line (supporting `\` continuations), bounded by start/end of line, whitespace, or quotes/backticks on both sides.
+- `key` (optional): for structured files, must equal an extracted `key` signal as printed by `inventory` (e.g. `scripts.<name>`, `tool.ruff.line-length`, `hooks.PreToolUse`). Not supported on prose, shell, or source files (cite `path` and `line` instead).
+- `line` (optional): 1-based line number within the cited file; when combined with `command` or `key`, it must equal that extracted signal's line (or the matching line in non-structured files).
 
 ## Deduplication rules
 
@@ -40,9 +40,11 @@ Every candidate must cite at least one tracked, non-excluded regular file in `pr
 | `new` | No collision with `.byte-stack/`, bundled `bmode`, or steering files | None |
 | `exists-identical` | Existing `.byte-stack/<kind>/<key>` matches byte-for-byte | None (no-op, mtime preserved) |
 | `exists-differs` | Existing `.byte-stack/<kind>/<key>` differs (including CRLF vs LF bytes on `references/` and `scripts/`) | `--update <id>` for unmodified managed playbooks/workflows; `--force <id>` for manual/modified files and all `references/`/`scripts/` |
-| `overrides-bundled` | Same `kind`/`key` as a bundled `byte-stack` asset | `--override-bundled <id>` (or `--force <id>`) |
-| `restates-steering` | All provenance cites steering files (`.claude/settings.json` is classified as hooks, not steering), or >= 80% of lines appear verbatim (whole-line match) in steering files | `--force <id>` |
-| `duplicates-catalog` | Same normalized trigger or title, or byte-identical same-kind content, as another bundled, repo, or earlier accepted batch entry | `--force <id>` |
+| `overrides-bundled` | Same `kind`/`key` as a bundled `byte-stack` asset | `--override-bundled <id>` |
+| `restates-steering` | All provenance cites steering files (`.claude/settings.json` is classified as hooks, not steering), or >= 80% of lines appear verbatim (whole-line match) in steering files | `--allow-duplicate <id>` |
+| `duplicates-catalog` | Same normalized trigger or title, or byte-identical same-kind content, as another bundled, repo, or earlier accepted batch entry | `--allow-duplicate <id>` |
+
+Flags are single-purpose: `--force <id>` authorizes replacing a differing file only and never bypasses `restates-steering`, `duplicates-catalog`, or `overrides-bundled`. When a candidate both differs from an existing file and triggers a dedupe block, preview reports both conflicts and the diff, and writing requires both flags.
 
 Soft `similar_to` warnings (capped at 3) compare playbooks/workflows against playbook/workflow titles and triggers, references against reference titles, and non-script candidates against steering files (including bullet-normalized line overlap). Scripts emit no `similar_to` noise.
 
@@ -55,14 +57,14 @@ Soft `similar_to` warnings (capped at 3) compare playbooks/workflows against pla
    { ... }
    EOF
    ```
-   Sensitive lines in diffs (secrets, home paths, repo root) are visibly redacted. Invalid references (e.g., conflicting frontmatter/body triggers) and ancestor/descendant target collisions fail at preflight before any file is written.
+   All CLI output (stdout JSON, text mode, diffs, and stderr diagnostics) passes through one output sanitizer that redacts secrets, home paths, and whole-path repository-root prefixes. Invalid references (e.g., conflicting frontmatter/body triggers) and ancestor/descendant target collisions fail at preflight before any file is written.
 3. Present each candidate's `id`, `category`, `provenance`, `verdict`, `reason`, `similar_to`, and unified diff.
-4. Ask the user which IDs to write (and confirm any `--update`, `--override-bundled`, or `--force` flags).
+4. Ask the user which IDs to write (and confirm any `--update`, `--override-bundled`, `--allow-duplicate`, or `--force` flags).
 5. Write only approved IDs:
    ```sh
    python3 "<extract-assets directory>/scripts/extract_assets.py" write --stdin --approve <id> --json <<'EOF'
    { ... }
    EOF
    ```
-   Creates use create-if-absent (`os.link`), and forced replacements re-check preflight bytes before `os.replace`, turning post-preflight changes into per-ID exit-3 conflicts. Writes are atomic per file; an unexpected I/O error mid-run can leave earlier files written.
+   Creates are no-clobber (`os.link`, falling back to exclusive `O_CREAT | O_EXCL` on filesystems without hard links). A forced replacement compares the target with the previewed bytes immediately before `os.replace`; a concurrent edit landing inside that last step before the rename can be lost (the same window as `capture_playbook.py`), and `--force <id>` is the user's approval to replace the file. Writes are atomic per file; an unexpected I/O error mid-run can leave earlier files written.
 6. Check exit codes: `0` ok, `1` invalid candidates or colliding targets (nothing written), `2` Git/path/symlink/`bmode` diagnostic (nothing written on preflight failure), `3` conflict on one or more IDs (conflicting IDs skipped; diff shown).

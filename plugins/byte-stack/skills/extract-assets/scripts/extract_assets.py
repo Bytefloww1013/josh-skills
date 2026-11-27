@@ -2,6 +2,7 @@
 """Scan a Git repository and deterministically preview/write .byte-stack/ assets."""
 import argparse
 import difflib
+import errno
 import hashlib
 import json
 import os
@@ -23,33 +24,27 @@ SCHEMA_VERSION = 1
 ALLOWED_CATEGORIES = ("workflow", "convention", "rule", "knowledge")
 ALLOWED_KINDS = ("playbooks", "workflows", "references", "scripts")
 ALLOWED_ENVELOPE_KEYS = frozenset({"schema_version", "candidates"})
-ALLOWED_CANDIDATE_KEYS = frozenset(
-    {"id", "category", "kind", "key", "provenance", "rationale", "payload", "content", "executable"}
-)
+ALLOWED_CANDIDATE_KEYS = frozenset({"id", "category", "kind", "key", "provenance", "rationale", "payload", "content", "executable"})
 ALLOWED_PROVENANCE_KEYS = frozenset({"path", "command", "key", "line"})
-ALLOWED_PAYLOAD_SUBKEYS = frozenset(
-    {"title", "use_when", "prerequisites", "steps", "verification", "guardrails"}
-)
+ALLOWED_PAYLOAD_SUBKEYS = frozenset({"title", "use_when", "prerequisites", "steps", "verification", "guardrails"})
 PUBLIC_PLAN_KEYS = (
     "category", "dedupe_flags", "diff", "id", "key", "kind", "provenance",
     "reason", "relative_path", "similar_to", "status", "verdict", "verdict_reason",
 )
 
-REF_KEY_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*\.md$")
-SCRIPT_KEY_PATTERN = re.compile(
-    r"^[a-z0-9]+(?:[-_][a-z0-9]+)*(?:/[a-z0-9]+(?:[-_][a-z0-9]+)*)*(?:\.[a-z0-9]+)?$"
-)
-_TOKEN_CHAR_RE = re.compile(r"[A-Za-z0-9_-]")
+SCRIPT_KEY_PATTERN = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*(?:/[a-z0-9]+(?:[-_][a-z0-9]+)*)*(?:\.[a-z0-9]+)?$")
 _PEM_BEGIN_RE = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
 _PEM_END_RE = re.compile(r"-----END [A-Z ]*PRIVATE KEY-----")
+_BULLET_RE = re.compile(r"^(?:[-*+]|\d+\.)\s+")
+_WS_RE = re.compile(r"[ \t\r\n]*")
 
-EXTRA_LOCAL_PATH_PATTERNS = (
-    re.compile(r"(?<![A-Za-z0-9._-])/(?:home|Users)/[A-Za-z0-9._-]+(?=$|[^A-Za-z0-9._-])"),
-    re.compile(r"[A-Za-z]:\\Users\\[A-Za-z0-9._-]+(?=$|[^A-Za-z0-9._-])"),
+LOCAL_PATH_PATTERNS = (
+    re.compile(r"(?<![\w.])/(?:home|Users)/[^\s/\\'\"`<>|;,)\]}]+(?:/[^\s'\"`<>|;,)\]}]*)?"),
+    re.compile(r"[A-Za-z]:\\Users\\[^\s/\\'\"`<>|;,)\]}]+(?:\\[^\s'\"`<>|;,)\]}]*)?"),
 )
-REDACT_LOCAL_PATH_PATTERNS = (
-    re.compile(r"(?<![A-Za-z0-9._-])/(?:home|Users)/[A-Za-z0-9._-]+(?:/[^\s'\"`<>|;,)]*)?"),
-    re.compile(r"[A-Za-z]:\\Users\\[A-Za-z0-9._-]+(?:\\[^\s'\"`<>|;,)]*)?"),
+LINK_FALLBACK_ERRNOS = frozenset(
+    code for name in ("EPERM", "EOPNOTSUPP", "ENOTSUP", "EXDEV")
+    for code in (getattr(errno, name, None),) if code is not None
 )
 
 MAX_CONTENT_BYTES = 65536
@@ -61,13 +56,12 @@ MAX_SIGNALS_PER_FILE = 30
 MAX_SIGNAL_TEXT_LEN = 200
 
 VENDOR_BUILD_DIRS = frozenset({
-    "node_modules", "vendor", "third_party", "dist", "build", "target", ".venv",
-    "venv", "__pycache__", ".tox", ".nox", ".pytest_cache", ".mypy_cache",
-    ".ruff_cache", ".next", ".nuxt", ".cache", "coverage", "htmlcov", ".gradle",
-    "Pods", "bower_components", ".terraform", ".eggs",
+    "node_modules", "vendor", "third_party", "dist", "build", "target", ".venv", "venv",
+    "__pycache__", ".tox", ".nox", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".next",
+    ".nuxt", ".cache", "coverage", "htmlcov", ".gradle", "Pods", "bower_components", ".terraform", ".eggs",
 })
 SECRET_NAME_PATTERNS = (
-    re.compile(r"^\.env(?:\..+)?$", re.IGNORECASE),
+    re.compile(r"^\.env", re.IGNORECASE),
     re.compile(r"\.(?:pem|key|p12|pfx|jks|keystore|kdbx|secret|secrets)$", re.IGNORECASE),
     re.compile(r"^id_(?:rsa|ed25519|ecdsa|dsa)(?:\..+)?$", re.IGNORECASE),
     re.compile(r"^credentials(?:\..+)?$", re.IGNORECASE),
@@ -106,16 +100,17 @@ TASK_RUNNER_NAMES = frozenset({
     "rakefile", "turbo.json", "nx.json", "mise.toml", "procfile",
 })
 QUALITY_EXACT_NAMES = frozenset({
-    ".editorconfig", ".flake8", ".pylintrc", "pylintrc", ".isort.cfg", ".bandit",
-    ".shellcheckrc", ".hadolint.yaml", "biome.json", "biome.jsonc", "pyrightconfig.json",
-    "jsconfig.json", "oxlint.json", ".oxlintrc.json", "deno.json", "renovate.json",
-    "ruff.toml", ".ruff.toml", "mypy.ini", ".mypy.ini", ".golangci.yml", ".golangci.yaml",
-    "rustfmt.toml", ".rustfmt.toml", "clippy.toml", ".clippy.toml", "tsconfig.json",
+    ".editorconfig", ".flake8", ".pylintrc", "pylintrc", ".isort.cfg", ".bandit", ".shellcheckrc",
+    ".hadolint.yaml", "biome.json", "biome.jsonc", "pyrightconfig.json", "jsconfig.json",
+    "oxlint.json", ".oxlintrc.json", "deno.json", "renovate.json", "ruff.toml", ".ruff.toml",
+    "mypy.ini", ".mypy.ini", ".golangci.yml", ".golangci.yaml", "rustfmt.toml", ".rustfmt.toml",
+    "clippy.toml", ".clippy.toml", "tsconfig.json",
 })
 QUALITY_PREFIXES = (
     ".eslintrc", "eslint.config.", ".prettierrc", "prettier.config.",
     "tsconfig.", ".stylelintrc", ".markdownlint", ".yamllint",
 )
+INI_EXACT_NAMES = frozenset({".editorconfig", ".flake8", ".pylintrc", "pylintrc", ".bandit", ".shellcheckrc"})
 SCRIPT_DIRS = frozenset({"scripts", "script", "bin", "tools"})
 SCRIPT_EXTS = frozenset({".sh", ".bash", ".zsh", ".py", ".ts", ".js", ".mjs", ".cjs", ".rb", ".pl", ".ps1"})
 STOPWORDS = frozenset({
@@ -147,71 +142,120 @@ def load_bmode(bmode_arg):
         sys.path.insert(0, scripts_dir)
     import assets as bmode_assets
     import capture_playbook as bmode_capture
-
     return bmode_dir, bmode_assets, bmode_capture, capture_py
 
 
-def _has_local_path(text, bmode_capture):
-    return (
-        (bmode_capture is not None and any(p.search(text) for p in bmode_capture.LOCAL_PATH_PATTERNS))
-        or any(p.search(text) for p in EXTRA_LOCAL_PATH_PATTERNS)
-    )
-
-
-def _contains_sensitive(text, bmode_capture, repo_strings=()):
-    return (
-        any(n and n in text for n in repo_strings)
-        or _has_local_path(text, bmode_capture)
-        or (bmode_capture is not None and any(p.search(text) for p in bmode_capture.SECRET_PATTERNS))
-    )
-
-
-def _sanitize_text(text, repo, bmode_dir, bmode_capture, extra_paths=()):
-    """Redact repo/bmode roots, machine-local home paths, and secret patterns."""
-    out = text
-    replacements = []
+def _build_sanitizer(repo=None, bmode_dir=None, bmode_capture=None, extra_paths=()):
+    """Build (root_pats, secret_pats) for whole-path prefix, secret, and home-path sanitization."""
+    root_pats, seen = [], set()
     for path_obj, token in ((repo, "<repo>"), (bmode_dir, "<bmode>"), *((p, "<cwd>") for p in extra_paths)):
-        if path_obj is not None:
-            for needle in {str(Path(path_obj).resolve()), str(path_obj)}:
-                if needle:
-                    replacements.append((needle, token))
-    for needle, token in sorted(replacements, key=lambda item: len(item[0]), reverse=True):
-        out = out.replace(needle, token)
-    for pat in REDACT_LOCAL_PATH_PATTERNS:
+        if path_obj is None:
+            continue
+        for raw in (str(Path(path_obj).resolve()), str(path_obj)):
+            clean = raw.rstrip("/\\")
+            if clean and clean not in seen:
+                seen.add(clean)
+                pat = re.compile(r"(?<![^\s'\"`<>|;,(\[{=:])" + re.escape(clean) + r"(?=$|[/\\\s'\"`<>|;,)\]}:]|\.(?=$|\s))")
+                root_pats.append((len(clean), pat, token))
+    root_pats.sort(key=lambda item: item[0], reverse=True)
+    return root_pats, (bmode_capture.SECRET_PATTERNS if bmode_capture is not None else ())
+
+
+def _has_local_path(text):
+    return any(p.search(text) for p in LOCAL_PATH_PATTERNS)
+
+
+def _contains_sensitive(text, sanitizer):
+    root_pats, secret_pats = sanitizer
+    return any(pat.search(text) for _, pat, _ in root_pats) or any(p.search(text) for p in secret_pats) or _has_local_path(text)
+
+
+def _sanitize_str(text, sanitizer):
+    root_pats, secret_pats = sanitizer
+    out = text
+    for _, pat, token in root_pats:
+        out = pat.sub(token, out)
+    for pat in secret_pats:
+        out = pat.sub("<redacted-secret>", out)
+    for pat in LOCAL_PATH_PATTERNS:
         out = pat.sub("<local-path>", out)
-    if bmode_capture is not None:
-        for pat in bmode_capture.LOCAL_PATH_PATTERNS:
-            out = pat.sub("<local-path>/", out)
-        for pat in bmode_capture.SECRET_PATTERNS:
-            out = pat.sub("<redacted-secret>", out)
     return out
 
 
-def _redact_diff(diff_text, repo, bmode_dir, bmode_capture):
+def _redact_diff(diff_text, sanitizer):
     """Visibly redact diff lines containing secrets, home paths, or the repo root."""
     if not diff_text:
         return ""
-    repo_strs = tuple(sorted({str(repo), str(repo.resolve())}, key=len, reverse=True)) if repo is not None else ()
     out, in_pem = [], False
     for line in diff_text.splitlines(keepends=True):
         eol = "\r\n" if line.endswith("\r\n") else ("\n" if line.endswith("\n") else "")
         body = line[: len(line) - len(eol)] if eol else line
         if body.startswith(("--- ", "+++ ", "@@ ")) or not body or body[0] not in ("-", "+", " "):
-            out.append(_sanitize_text(body, repo, bmode_dir, bmode_capture) + eol)
+            out.append(_sanitize_str(body, sanitizer) + eol)
             continue
         prefix, content = body[0], body[1:]
         if _PEM_BEGIN_RE.search(content):
-            in_pem = True
-            out.append(f"{prefix}[REDACTED: sensitive content]{eol}")
+            in_pem = sensitive = True
         elif in_pem:
-            if _PEM_END_RE.search(content):
-                in_pem = False
-            out.append(f"{prefix}[REDACTED: sensitive content]{eol}")
-        elif _contains_sensitive(content, bmode_capture, repo_strs):
-            out.append(f"{prefix}[REDACTED: sensitive content]{eol}")
+            sensitive = True
+            in_pem = not bool(_PEM_END_RE.search(content))
         else:
-            out.append(line)
+            sensitive = _contains_sensitive(content, sanitizer)
+        out.append(f"{prefix}[REDACTED: sensitive content]{eol}" if sensitive else line)
     return "".join(out)
+
+
+def _sanitize_value(value, sanitizer):
+    if isinstance(value, str):
+        return _sanitize_str(value, sanitizer)
+    if isinstance(value, dict):
+        return {
+            (_sanitize_str(k, sanitizer) if isinstance(k, str) else k): (
+                _redact_diff(v, sanitizer) if k == "diff" and isinstance(v, str) else _sanitize_value(v, sanitizer)
+            )
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_sanitize_value(v, sanitizer) for v in value]
+    return value
+
+
+def _emit(payload, sanitizer, *, as_json=False, pretty=True, stream=None, end="\n"):
+    """Single output boundary: sanitize every byte printed to stdout or stderr."""
+    clean = _sanitize_value(payload, sanitizer)
+    if as_json:
+        text = json.dumps(clean, indent=2, sort_keys=True) if pretty else json.dumps(clean, sort_keys=True, separators=(",", ":"))
+    else:
+        text = str(clean)
+    print(text, file=sys.stdout if stream is None else stream, end=end)
+
+
+def _emit_invalid(errors, as_json, sanitizer):
+    if as_json:
+        _emit({"errors": errors, "status": "invalid"}, sanitizer, as_json=True)
+    else:
+        _emit("\n".join(f"candidate error: {err}" for err in errors), sanitizer, stream=sys.stderr)
+    return 1
+
+
+def _read_unbuffered(path, limit):
+    """Read at most `limit` bytes unbuffered so kernel reads never exceed the budget."""
+    chunks, remaining = [], limit
+    with path.open("rb", buffering=0) as handle:
+        while remaining > 0:
+            chunk = handle.read(remaining)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _drop_unfinished_line(raw, truncated):
+    if not truncated or raw.endswith(b"\n"):
+        return raw
+    last_nl = raw.rfind(b"\n")
+    return raw[: last_nl + 1] if last_nl != -1 else b""
 
 
 def _check_utf8(label, text, errors):
@@ -224,7 +268,7 @@ def _check_utf8(label, text, errors):
 
 
 def _check_safety_patterns(bmode_capture, label, text, errors):
-    if _has_local_path(text, bmode_capture):
+    if _has_local_path(text):
         errors.append(f"{label} must not contain a machine-local home path")
     if bmode_capture is not None and any(p.search(text) for p in bmode_capture.SECRET_PATTERNS):
         errors.append(f"{label} appears to contain a secret or credential")
@@ -239,10 +283,7 @@ def _check_regular(path):
 
 def list_tracked_files(repo):
     """Return sorted list of (rel_posix_path, mode) from `git ls-files -s -z`."""
-    result = subprocess.run(
-        ["git", "-C", str(repo), "ls-files", "-s", "-z"],
-        capture_output=True, text=True, env={**os.environ, "LC_ALL": "C"},
-    )
+    result = subprocess.run(["git", "-C", str(repo), "ls-files", "-s", "-z"], capture_output=True, text=True, env={**os.environ, "LC_ALL": "C"})
     if result.returncode != 0:
         raise DiagnosticError(result.stderr.strip() or "git ls-files failed")
     seen = {}
@@ -255,18 +296,35 @@ def list_tracked_files(repo):
     return sorted(seen.items(), key=lambda item: item[0])
 
 
-def exclusion_reason(rel_path, mode):
+def _init_worktree(args):
+    """Load bmode, resolve the Git worktree, list tracked files, and build the sanitizer."""
+    bmode_dir = bmode_capture = repo = None
+    try:
+        bmode_dir, bmode_assets, bmode_capture, capture_py = load_bmode(args.bmode)
+        repo = bmode_assets.checkout(args.cwd)
+        if repo is None:
+            raise DiagnosticError("Run extract-assets inside a Git worktree.")
+        tracked = list_tracked_files(repo)
+    except (DiagnosticError, OSError, ValueError) as err:
+        _emit(str(err), _build_sanitizer(repo, bmode_dir, bmode_capture, extra_paths=(args.cwd, args.bmode)), stream=sys.stderr)
+        return None
+    return repo, bmode_dir, bmode_assets, bmode_capture, capture_py, tracked, _build_sanitizer(repo, bmode_dir, bmode_capture)
+
+
+def exclusion_reason(rel_path, mode, bmode_capture=None):
     """Return exclusion reason string for a path (checking every segment), or None."""
-    if mode == "120000":
-        return "symlink"
-    if mode == "160000":
-        return "submodule"
+    if mode in ("120000", "160000"):
+        return "symlink" if mode == "120000" else "submodule"
     parts = rel_path.split("/")
     if any(part in VENDOR_BUILD_DIRS for part in parts[:-1]):
         return "vendored_or_build"
-    if any(pat.search(part) for part in parts for pat in SECRET_NAME_PATTERNS):
+    if any(pat.search(part) for part in parts for pat in SECRET_NAME_PATTERNS) or (
+        bmode_capture is not None and any(pat.search(rel_path) for pat in bmode_capture.SECRET_PATTERNS)
+    ):
         return "secret_file"
-    if any(pat.search(part) for part in parts for pat in MACHINE_LOCAL_PATTERNS):
+    if any(pat.search(part) for part in parts for pat in MACHINE_LOCAL_PATTERNS) or (
+        bmode_capture is not None and _has_local_path(rel_path)
+    ):
         return "machine_local"
     return None
 
@@ -276,43 +334,19 @@ def classify_path(rel_path, mode):
     parts = rel_path.split("/")
     if parts[0] == ".byte-stack":
         return None
-    lower_path = rel_path.lower()
-    lower_name = parts[-1].lower()
+    lower_path, lower_name = rel_path.lower(), parts[-1].lower()
     suffix = Path(lower_name).suffix
-
-    if (
-        (len(parts) >= 3 and parts[0] == ".github" and parts[1] == "workflows" and suffix in (".yml", ".yaml"))
-        or lower_path in CI_PATHS
-        or (len(parts) >= 2 and parts[0] == ".buildkite" and suffix in (".yml", ".yaml"))
-    ):
+    if (len(parts) >= 3 and parts[0] == ".github" and parts[1] == "workflows" and suffix in (".yml", ".yaml")) or lower_path in CI_PATHS or (len(parts) >= 2 and parts[0] == ".buildkite" and suffix in (".yml", ".yaml")):
         return "ci"
-    if (
-        lower_path in HOOK_PATHS
-        or (parts[0] == ".husky" and len(parts) == 2 and not lower_name.startswith("_"))
-        or (parts[0] in (".githooks", "githooks") and len(parts) >= 2)
-        or lower_name.startswith((".lintstagedrc", "lint-staged.config."))
-    ):
+    if lower_path in HOOK_PATHS or (parts[0] == ".husky" and len(parts) == 2 and not lower_name.startswith("_")) or (parts[0] in (".githooks", "githooks") and len(parts) >= 2) or lower_name.startswith((".lintstagedrc", "lint-staged.config.")):
         return "git_hooks"
-    if (
-        lower_name in STEERING_NAMES
-        or lower_path in (".github/copilot-instructions.md", ".cursorrules")
-        or lower_path.startswith(".cursor/rules/")
-    ):
+    if lower_name in STEERING_NAMES or lower_path in (".github/copilot-instructions.md", ".cursorrules") or lower_path.startswith(".cursor/rules/"):
         return "steering"
     if suffix in (".md", ".mdx") and lower_path.startswith(("docs/adr/", "docs/adrs/", "docs/decisions/", "adr/", "adrs/")):
         return "adrs"
-    if (
-        (lower_path.startswith(("docs/directives/", "docs/standards/", "docs/guidelines/", "docs/policies/"))
-         and suffix in (".md", ".mdx", ".txt"))
-        or lower_name in DIRECTIVE_NAMES
-        or lower_path in DIRECTIVE_PATHS
-    ):
+    if (lower_path.startswith(("docs/directives/", "docs/standards/", "docs/guidelines/", "docs/policies/")) and suffix in (".md", ".mdx", ".txt")) or lower_name in DIRECTIVE_NAMES or lower_path in DIRECTIVE_PATHS:
         return "directives"
-    if (
-        lower_name in QUALITY_EXACT_NAMES
-        or any(lower_name.startswith(pref) for pref in QUALITY_PREFIXES)
-        or lower_path in (".github/dependabot.yml", ".github/dependabot.yaml")
-    ):
+    if lower_name in QUALITY_EXACT_NAMES or any(lower_name.startswith(p) for p in QUALITY_PREFIXES) or lower_path in (".github/dependabot.yml", ".github/dependabot.yaml"):
         return "quality"
     if lower_name in TASK_RUNNER_NAMES or suffix == ".mk" or lower_name.startswith(("gruntfile.", "gulpfile.")):
         return "task_runners"
@@ -329,41 +363,95 @@ def _extract_script_summary(lines):
         if not s or (idx == 1 and s.startswith("#!")):
             continue
         if end_delim is not None:
-            if end_delim in s:
-                body = s.split(end_delim, 1)[0].lstrip("* ").strip()
+            chunk, closed = (s.split(end_delim, 1)[0], True) if end_delim in s else (s, False)
+            body = chunk.lstrip("* ").strip() if (closed or end_delim == "*/") else chunk
+            if closed:
                 end_delim = None
-                if body:
-                    return idx, body
-                continue
-            body = s.lstrip("* ").strip() if end_delim == "*/" else s
             if body:
                 return idx, body
             continue
-        for start, end in (('"""', '"""'), ("'''", "'''"), ("/*", "*/")):
-            if s.startswith(start):
-                rest = s[len(start):]
-                if end in rest:
-                    body = rest.split(end, 1)[0].lstrip("* ").strip()
-                    if body:
-                        return idx, body
-                else:
-                    body = rest.lstrip("* ").strip() if end == "*/" else rest.strip()
-                    if body:
-                        return idx, body
-                    end_delim = end
-                break
-        else:
-            if s.startswith(("#", "//")):
-                body = s.lstrip("#/").strip()
-                if body and not (set(body) <= {"-", "=", "*"}):
-                    return idx, body
-                continue
-            break
+        block = next(((st, en) for st, en in (('"""', '"""'), ("'''", "'''"), ("/*", "*/")) if s.startswith(st)), None)
+        if block:
+            rest = s[len(block[0]):]
+            chunk, closed = (rest.split(block[1], 1)[0], True) if block[1] in rest else (rest, False)
+            body = chunk.lstrip("* ").strip() if (closed or block[1] == "*/") else chunk.strip()
+            if body:
+                return idx, body
+            if not closed:
+                end_delim = block[1]
+            continue
+        if s.startswith(("#", "//")):
+            body = s.lstrip("#/").strip()
+            if body and not (set(body) <= {"-", "=", "*"}):
+                return idx, body
+            continue
+        break
     return None
 
 
-def extract_signals(rel_path, text, bmode_capture, repo_strings, bucket=None):
-    """Extract bounded signals (commands, keys, headings, or one script summary) with line numbers."""
+def _has_structured_extractor(rel_path):
+    lower_name = Path(rel_path).name.lower()
+    return Path(lower_name).suffix in (".json", ".jsonc", ".yml", ".yaml", ".mk", ".toml", ".ini", ".cfg") or lower_name in ("makefile", "gnumakefile", "justfile") or lower_name in INI_EXACT_NAMES
+
+
+def _walk_json_keys(text):
+    """Return [(dotted_key, 1-based line_no, value), ...] for object properties in valid JSON, or None."""
+    dec, n, out = json.JSONDecoder(), len(text), []
+
+    def walk_obj(i, prefix, depth):
+        i = _WS_RE.match(text, i + 1).end()
+        if i < n and text[i] == "}":
+            return i + 1
+        while i < n:
+            key, end_k = dec.raw_decode(text, i)
+            if not isinstance(key, str):
+                raise ValueError("expected string key")
+            key_line, i = text.count("\n", 0, i) + 1, _WS_RE.match(text, end_k).end()
+            if i >= n or text[i] != ":":
+                raise ValueError("expected ':'")
+            i = _WS_RE.match(text, i + 1).end()
+            fk = f"{prefix}.{key}" if prefix else key
+            val, end_v = dec.raw_decode(text, i)
+            out.append((fk, key_line, val))
+            if isinstance(val, dict) and depth < 3:
+                walk_obj(i, fk, depth + 1)
+            i = _WS_RE.match(text, end_v).end()
+            if i < n and text[i] == ",":
+                i = _WS_RE.match(text, i + 1).end()
+                continue
+            if i < n and text[i] == "}":
+                return i + 1
+            raise ValueError("expected ',' or '}'")
+        raise ValueError("unterminated object")
+
+    start = _WS_RE.match(text, 0).end()
+    if start < n and text[start] == "{":
+        try:
+            walk_obj(start, "", 0)
+        except ValueError:
+            return None
+    return out
+
+
+def _logical_lines(file_lines):
+    """Return [(1-based start_line, joined_text), ...] merging trailing backslash continuations."""
+    out, idx = [], 0
+    while idx < len(file_lines):
+        start_ln, parts = idx + 1, []
+        while idx < len(file_lines):
+            line = file_lines[idx]
+            idx += 1
+            if line.rstrip().endswith("\\") and idx < len(file_lines):
+                parts.append(line.rstrip()[:-1])
+                continue
+            parts.append(line)
+            break
+        out.append((start_ln, " ".join(parts)))
+    return out
+
+
+def extract_signals(rel_path, text, sanitizer=None, bucket=None, for_provenance=False):
+    """Extract signals (commands, keys, headings, or one script summary) with exact 1-based lines."""
     signals, truncated_signals, dropped_sensitive = [], False, 0
     lines = text.splitlines()
     lower_name = Path(rel_path).name.lower()
@@ -371,17 +459,17 @@ def extract_signals(rel_path, text, bmode_capture, repo_strings, bucket=None):
 
     def add_signal(kind, line_no, raw_text, key_name=None):
         nonlocal truncated_signals, dropped_sensitive
-        if _contains_sensitive(raw_text, bmode_capture, repo_strings) or (
-            key_name is not None and _contains_sensitive(key_name, bmode_capture, repo_strings)
+        if not for_provenance and sanitizer is not None and (
+            _contains_sensitive(raw_text, sanitizer) or (key_name is not None and _contains_sensitive(key_name, sanitizer))
         ):
             dropped_sensitive += 1
             return
         collapsed = " ".join(raw_text.strip().split())
         if not collapsed:
             return
-        if len(collapsed) > MAX_SIGNAL_TEXT_LEN:
-            collapsed = collapsed[: MAX_SIGNAL_TEXT_LEN - 3] + "..."
-        if len(signals) >= MAX_SIGNALS_PER_FILE:
+        if not for_provenance and len(collapsed) > MAX_SIGNAL_TEXT_LEN:
+            collapsed, truncated_signals = collapsed[: MAX_SIGNAL_TEXT_LEN - 3] + "...", True
+        if not for_provenance and len(signals) >= MAX_SIGNALS_PER_FILE:
             truncated_signals = True
             return
         sig = {"kind": kind, "line": line_no, "text": collapsed}
@@ -389,51 +477,48 @@ def extract_signals(rel_path, text, bmode_capture, repo_strings, bucket=None):
             sig["key"] = key_name
         signals.append(sig)
 
-    if bucket == "scripts":
+    if not for_provenance and bucket == "scripts":
         summary = _extract_script_summary(lines)
         if summary is not None:
             add_signal("summary", summary[0], summary[1])
-        return signals, False, dropped_sensitive
+        return signals, truncated_signals, dropped_sensitive
 
     if suffix in (".md", ".mdx"):
         in_fence, fence_shell = False, False
         for idx, line in enumerate(lines, 1):
             stripped = line.strip()
             if stripped.startswith("```"):
-                if not in_fence:
-                    lang = stripped[3:].strip().lower().split()[0] if stripped[3:].strip() else ""
-                    in_fence, fence_shell = True, lang in ("sh", "bash", "shell", "zsh", "console", "")
-                else:
-                    in_fence, fence_shell = False, False
+                lang = stripped[3:].strip().lower().split()[0] if (not in_fence and stripped[3:].strip()) else ""
+                in_fence, fence_shell = (not in_fence), (not in_fence and lang in ("sh", "bash", "shell", "zsh", "console", ""))
             elif not in_fence and re.match(r"^#{1,4}\s+\S", stripped):
                 add_signal("heading", idx, stripped)
             elif in_fence and fence_shell and stripped and not stripped.startswith("#"):
                 add_signal("command", idx, stripped[2:].strip() if stripped.startswith("$ ") else stripped)
     elif suffix in (".json", ".jsonc"):
-        parsed = None
-        if lower_name == "package.json":
-            try:
-                parsed = json.loads(text)
-            except ValueError:
-                parsed = None
-        if isinstance(parsed, dict):
-            scripts_obj = parsed.get("scripts")
-            if isinstance(scripts_obj, dict):
-                for sname in sorted(scripts_obj):
-                    if isinstance(scripts_obj[sname], str):
-                        ln = next((i for i, l in enumerate(lines, 1) if f'"{sname}"' in l), 1)
-                        add_signal("command", ln, scripts_obj[sname], key_name=f"scripts.{sname}")
-            for k in sorted(parsed):
-                if k != "scripts":
-                    ln = next((i for i, l in enumerate(lines, 1) if f'"{k}"' in l), 1)
-                    add_signal("key", ln, k)
+        entries = _walk_json_keys(text)
+        if entries is not None:
+            for fk, ln, val in entries:
+                if lower_name == "package.json":
+                    if fk.startswith("scripts.") and fk.count(".") == 1 and isinstance(val, str):
+                        add_signal("command", ln, val, key_name=fk)
+                    elif "." not in fk and fk != "scripts":
+                        add_signal("key", ln, fk)
+                else:
+                    add_signal("key", ln, fk)
         else:
             for idx, line in enumerate(lines, 1):
                 m = re.match(r'^\s{1,2}"([^"]+)"\s*:', line)
                 if m:
                     add_signal("key", idx, m.group(1))
     elif suffix in (".yml", ".yaml"):
-        in_run_block, run_indent = False, 0
+        in_run_block, run_indent, cont_parts, cont_line = False, 0, [], None
+
+        def flush_cont():
+            nonlocal cont_parts, cont_line
+            if cont_parts:
+                add_signal("command", cont_line, " ".join(p for p in cont_parts if p))
+                cont_parts, cont_line = [], None
+
         for idx, line in enumerate(lines, 1):
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
@@ -441,59 +526,64 @@ def extract_signals(rel_path, text, bmode_capture, repo_strings, bucket=None):
             indent = len(line) - len(line.lstrip(" "))
             if in_run_block:
                 if indent > run_indent:
-                    add_signal("command", idx, stripped)
+                    cont_line = idx if cont_line is None else cont_line
+                    cont_parts.append(stripped[:-1].rstrip() if stripped.endswith("\\") else stripped)
+                    if not stripped.endswith("\\"):
+                        flush_cont()
                     continue
+                flush_cont()
                 in_run_block = False
             m_run = re.match(r"^(\s*)(?:-\s*)?run:\s*(.*)$", line)
             if m_run:
                 val = m_run.group(2).strip()
-                if val in ("|", ">", "|-", ">-", "|+", ">+"):
+                if re.fullmatch(r"[|>][+-]?\d*(?:\s+#.*)?", val):
                     in_run_block, run_indent = True, indent
                 elif val:
-                    add_signal("command", idx, val)
+                    add_signal("command", idx, val[1:-1] if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'") else val)
                 continue
-            m_uses = re.match(r"^\s*(?:-\s*)?(?:uses|repo|id):\s*(.+)$", line)
+            m_uses = re.match(r"^\s*(?:-\s*)?((?:uses|repo|id):\s*.+)$", line)
             if m_uses:
-                add_signal("key", idx, m_uses.group(0).strip())
+                add_signal("key", idx, m_uses.group(1).strip())
             elif indent == 0:
                 m_top = re.match(r"^([A-Za-z0-9_.-]+):", line)
                 if m_top:
                     add_signal("key", idx, m_top.group(1))
+        flush_cont()
     elif lower_name in ("makefile", "gnumakefile", "justfile") or suffix == ".mk":
-        for idx, line in enumerate(lines, 1):
+        for start_ln, line in _logical_lines(lines):
             if line.startswith("\t"):
-                cmd = line.strip()
+                cmd = " ".join(line.strip().split())
                 if cmd and not cmd.startswith("#"):
-                    add_signal("command", idx, cmd.lstrip("@-").strip())
+                    add_signal("command", start_ln, cmd.lstrip("@-+").strip())
                 continue
             m_target = re.match(r"^([A-Za-z0-9_./-]+)\s*:(?!=)", line)
             if m_target and not m_target.group(1).startswith("."):
-                add_signal("key", idx, m_target.group(1))
-    elif suffix in (".toml", ".ini", ".cfg") or lower_name in (".editorconfig", ".flake8"):
+                add_signal("key", start_ln, m_target.group(1))
+    elif suffix in (".toml", ".ini", ".cfg") or lower_name in INI_EXACT_NAMES:
         current_sec, in_scripts = "", False
         for idx, line in enumerate(lines, 1):
             stripped = line.strip()
             if not stripped or stripped.startswith(("#", ";")):
                 continue
-            m_sec = re.match(r"^\[([^\]]+)\]$", stripped)
+            m_sec = re.match(r"^\[{1,2}([^\]]+)\]{1,2}$", stripped)
             if m_sec:
                 current_sec = m_sec.group(1).strip()
                 add_signal("key", idx, current_sec)
                 in_scripts = current_sec.endswith("scripts")
             elif "=" in stripped:
                 k, v = (part.strip() for part in stripped.split("=", 1))
+                fk = f"{current_sec}.{k}" if current_sec else k
                 if in_scripts:
-                    cmd_val = v[1:-1] if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'") else v
-                    add_signal("command", idx, cmd_val, key_name=f"{current_sec}.{k}" if current_sec else k)
-                elif not line.startswith((" ", "\t")):
-                    add_signal("key", idx, k)
+                    add_signal("command", idx, v[1:-1] if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'") else v, key_name=fk)
+                elif not line.startswith((" ", "\t")) and " " not in k:
+                    add_signal("key", idx, fk)
     else:
         for idx, line in enumerate(lines, 1):
             stripped = line.strip()
             if idx == 1 and stripped.startswith("#!"):
                 add_signal("heading", idx, stripped)
             elif re.match(r"^(?:def|async def|function|export function)\s+[A-Za-z0-9_-]+", stripped):
-                add_signal("key", idx, stripped.split("{")[0].rstrip(":"))
+                add_signal("heading", idx, stripped.split("{")[0].rstrip(":"))
             elif re.match(r"^(?:python3?|node|npm|pnpm|yarn|pytest|go|cargo|git|make|bash|sh|rg)\s+\S", stripped):
                 add_signal("command", idx, stripped)
 
@@ -518,9 +608,7 @@ def _tokenize(text):
 
 
 def _catalog_tokens(kind, title, trigger):
-    if kind in ("playbooks", "workflows"):
-        return _tokenize(f"{title} {trigger}")
-    return _tokenize(title) if kind == "references" else frozenset()
+    return _tokenize(f"{title} {trigger}") if kind in ("playbooks", "workflows") else (_tokenize(title) if kind == "references" else frozenset())
 
 
 def _inspect_markdown_head(text, path_label, bmode_assets):
@@ -531,10 +619,7 @@ def _inspect_markdown_head(text, path_label, bmode_assets):
     if not body.strip():
         raise ValueError(f"empty asset: {path_label}")
     fm_trigger = meta.get("use-when", "").strip()
-    body_trigger = next(
-        (line.removeprefix("Use when: ").strip() for line in body.splitlines() if line.startswith("Use when: ")),
-        "",
-    )
+    body_trigger = next((line.removeprefix("Use when: ").strip() for line in body.splitlines() if line.startswith("Use when: ")), "")
     if fm_trigger and body_trigger and fm_trigger != body_trigger:
         raise ValueError(f"conflicting trigger descriptions: {path_label}")
     return fm_trigger or body_trigger, _extract_h1(body)
@@ -544,58 +629,48 @@ def read_bundled_catalog(bmode_assets, bmode_dir):
     """Enumerate bundled bmode assets across all four kinds once."""
     by_kind = {}
     for kind in bmode_assets.KINDS:
-        entries = {}
-        base = bmode_dir / kind
+        entries, base = {}, bmode_dir / kind
         if base.is_dir():
             for path in sorted(base.rglob("*")):
                 rel = path.relative_to(base)
-                if any(p.startswith(".") or p == "__pycache__" for p in rel.parts):
+                if any(p.startswith(".") or p == "__pycache__" for p in rel.parts) or path.is_dir() or (kind in ("playbooks", "workflows") and path.suffix != ".md"):
                     continue
-                if path.is_dir() or (kind in ("playbooks", "workflows") and path.suffix != ".md"):
-                    continue
-                key = rel.as_posix()
-                trigger = bmode_assets.inspect_file(path, kind)
+                key, trigger = rel.as_posix(), bmode_assets.inspect_file(path, kind)
                 raw = path.read_bytes() if path.stat().st_size <= MAX_CONTENT_BYTES else None
                 sha = hashlib.sha256(raw).hexdigest() if raw is not None else None
-                title = ""
-                if path.suffix == ".md":
-                    txt = raw.decode("utf-8", errors="replace") if raw is not None else path.read_text(encoding="utf-8", errors="replace")
-                    title = _extract_h1(txt)
-                entries[key] = {
-                    "origin": "bundled", "kind": kind, "key": key, "trigger": trigger,
-                    "title": title, "content_sha256": sha, "tokens": _catalog_tokens(kind, title, trigger),
-                }
+                title = _extract_h1(raw.decode("utf-8", errors="replace") if raw is not None else path.read_text(encoding="utf-8", errors="replace")) if path.suffix == ".md" else ""
+                entries[key] = {"origin": "bundled", "kind": kind, "key": key, "trigger": trigger, "title": title, "content_sha256": sha, "tokens": _catalog_tokens(kind, title, trigger)}
         by_kind[kind] = entries
     return by_kind
 
 
-def _walk_repo_kind_dir(r_base, kind, on_excl=None, on_error=None):
+def _walk_repo_kind_dir(r_base, kind, bmode_capture=None, on_excl=None, on_error=None):
     """Yield (rel_posix, path, lstat) under .byte-stack/<kind>/ safely without following symlinks."""
+    def fail(err):
+        if on_error:
+            on_error(err)
+            return
+        raise err
+
     def recurse(cur_dir):
         try:
             children = sorted(cur_dir.iterdir(), key=lambda p: p.name)
         except OSError as err:
-            if on_error:
-                on_error(err)
+            fail(err)
             return
         for child in children:
             rel_parts = child.relative_to(r_base).parts
             rel_posix = "/".join(rel_parts)
             if child.is_symlink():
-                err = ValueError(f"symlink in asset path: {child}")
-                if on_error:
-                    on_error(err)
-                    continue
-                raise err
+                fail(ValueError(f"symlink in asset path: {child}"))
+                continue
             try:
                 st = child.lstat()
             except OSError as err:
-                if on_error:
-                    on_error(err)
-                    continue
-                raise
+                fail(err)
+                continue
             is_dir = stat.S_ISDIR(st.st_mode)
-            excl = exclusion_reason(f"{rel_posix}/_" if is_dir else rel_posix, "100644")
+            excl = exclusion_reason(f"{rel_posix}/_" if is_dir else rel_posix, "100644", bmode_capture)
             if excl is not None:
                 if on_excl:
                     on_excl(f".byte-stack/{kind}/{rel_posix}", excl)
@@ -604,31 +679,34 @@ def _walk_repo_kind_dir(r_base, kind, on_excl=None, on_error=None):
                 continue
             if is_dir:
                 yield from recurse(child)
+            elif kind in ("playbooks", "workflows") and child.suffix != ".md":
                 continue
-            if kind in ("playbooks", "workflows") and child.suffix != ".md":
-                continue
-            if not stat.S_ISREG(st.st_mode):
-                err = ValueError(f"expected regular file: {child}")
-                if on_error:
-                    on_error(err)
-                    continue
-                raise err
-            yield rel_posix, child, st
+            elif not stat.S_ISREG(st.st_mode):
+                fail(ValueError(f"expected regular file: {child}"))
+            else:
+                yield rel_posix, child, st
 
     yield from recurse(r_base)
 
 
+def _has_budget(budget):
+    if budget["files_read"] >= budget["max_files"]:
+        budget["truncated"]["files"] = True
+        budget["bump"]("max_files_limit")
+        return False
+    if budget["bytes_remaining"] <= 0:
+        budget["truncated"]["bytes"] = True
+        budget["bump"]("max_bytes_limit")
+        return False
+    return True
+
+
 def collect_byte_stack_inventory(repo, bmode_dir, bmode_assets, bmode_capture, budget, excluded_paths):
-    """Inspect bundled and repo .byte-stack catalogs with exclusions, shared budget, and redaction."""
-    bundled_all = read_bundled_catalog(bmode_assets, bmode_dir)
-    catalog_out, diagnostics = {}, []
+    """Inspect bundled and repo .byte-stack catalogs with exclusions, shared budget, and strict checks."""
+    bundled_all, catalog_out, diagnostics = read_bundled_catalog(bmode_assets, bmode_dir), {}, []
 
     def add_diag(kind, message):
-        diagnostics.append({
-            "kind": kind,
-            "message": _sanitize_text(str(message), repo, bmode_dir, bmode_capture),
-            "scope": "byte_stack",
-        })
+        diagnostics.append({"kind": kind, "message": str(message), "scope": "byte_stack"})
 
     def note_excl(repo_rel, reason):
         if repo_rel not in excluded_paths:
@@ -636,68 +714,67 @@ def collect_byte_stack_inventory(repo, bmode_dir, bmode_assets, bmode_capture, b
             budget["bump"](reason)
 
     for kind in bmode_assets.KINDS:
-        bundled, repo_items = bundled_all[kind], {}
+        bundled, repo_items, r_base = bundled_all[kind], {}, None
         try:
-            r_base = bmode_assets.checked(repo, [".byte-stack", kind])
-            if r_base.exists() and not r_base.is_dir():
-                raise ValueError(f"expected directory: {r_base}")
+            cand_base = bmode_assets.checked(repo, [".byte-stack", kind])
+            if cand_base.exists() and not cand_base.is_dir():
+                raise ValueError(f"expected directory: {cand_base}")
+            r_base = cand_base if cand_base.exists() else None
         except (OSError, ValueError) as err:
             add_diag(kind, err)
-            r_base = None
 
-        if r_base is not None and r_base.exists():
+        if r_base is not None:
             for key, path, st in _walk_repo_kind_dir(
-                r_base, kind, on_excl=note_excl, on_error=lambda err, k=kind: add_diag(k, err)
+                r_base, kind, bmode_capture=bmode_capture, on_excl=note_excl, on_error=lambda err, k=kind: add_diag(k, err)
             ):
-                if budget["files_read"] >= budget["max_files"]:
-                    budget["truncated"]["files"] = True
-                    budget["bump"]("max_files_limit")
+                try:
+                    bmode_assets.validate_key(kind, key)
+                except ValueError as err:
+                    add_diag(kind, err)
                     continue
-                if budget["bytes_remaining"] <= 0:
-                    budget["truncated"]["bytes"] = True
-                    budget["bump"]("max_bytes_limit")
+                if not _has_budget(budget):
                     continue
+                head_truncated = False
                 try:
                     if kind != "scripts" and path.suffix == ".md":
                         read_cap = min(CATALOG_HEAD_BYTES, budget["bytes_remaining"])
-                        with path.open("rb") as handle:
-                            raw = handle.read(read_cap)
+                        raw = _read_unbuffered(path, read_cap)
                         budget["files_read"] += 1
                         budget["bytes_remaining"] -= len(raw)
-                        if len(raw) < st.st_size and read_cap < CATALOG_HEAD_BYTES:
+                        head_truncated = len(raw) < st.st_size
+                        if head_truncated and read_cap < CATALOG_HEAD_BYTES:
                             budget["truncated"]["bytes"] = True
                         if b"\x00" in raw:
                             budget["bump"]("binary")
                             continue
-                        trigger, _ = _inspect_markdown_head(raw.decode("utf-8", errors="replace"), path, bmode_assets)
+                        parse_raw = _drop_unfinished_line(raw, head_truncated)
+                        if head_truncated and not parse_raw:
+                            budget["truncated"]["bytes"] = True
+                            add_diag(kind, f"trigger not established within first {len(raw)} bytes: {path}")
+                            continue
+                        trigger, _ = _inspect_markdown_head(parse_raw.decode("utf-8"), path, bmode_assets)
                         if kind == "playbooks" and not trigger:
                             trigger = bundled[key]["trigger"] if key in bundled else ""
                             if not trigger:
-                                suffix_msg = f" within first {len(raw)} bytes" if len(raw) < st.st_size else ""
-                                add_diag(kind, f"missing 'Use when: ' description{suffix_msg}: {path}")
+                                if head_truncated:
+                                    budget["truncated"]["bytes"] = True
+                                add_diag(kind, f"missing 'Use when: ' description{' within first ' + str(len(raw)) + ' bytes' if head_truncated else ''}: {path}")
                                 continue
                     else:
-                        with path.open("rb"):
+                        with path.open("rb", buffering=0):
                             pass
                         budget["files_read"] += 1
                         trigger = ""
                 except (OSError, ValueError) as err:
-                    add_diag(kind, err)
+                    if head_truncated:
+                        budget["truncated"]["bytes"] = True
+                    msg = str(err)
+                    add_diag(kind, msg if str(path) in msg else f"{msg}: {path}")
                     continue
-
-                repo_items[key] = {
-                    "key": _sanitize_text(key, repo, bmode_dir, bmode_capture),
-                    "origin": "repo",
-                    "overrides_bundled": key in bundled,
-                    "repo_path": _sanitize_text(f".byte-stack/{kind}/{key}", repo, bmode_dir, bmode_capture),
-                    "trigger": _sanitize_text(trigger, repo, bmode_dir, bmode_capture),
-                }
+                repo_items[key] = {"key": key, "origin": "repo", "overrides_bundled": key in bundled, "repo_path": f".byte-stack/{kind}/{key}", "trigger": trigger}
 
         catalog_out[kind] = [
-            repo_items[k] if k in repo_items else {
-                "key": bundled[k]["key"], "origin": "bundled",
-                "overrides_bundled": False, "trigger": bundled[k]["trigger"],
-            }
+            repo_items[k] if k in repo_items else {"key": bundled[k]["key"], "origin": "bundled", "overrides_bundled": False, "trigger": bundled[k]["trigger"]}
             for k in sorted(set(bundled) | set(repo_items))
         ]
 
@@ -707,21 +784,13 @@ def collect_byte_stack_inventory(repo, bmode_dir, bmode_assets, bmode_capture, b
 
 def cmd_inventory(args):
     if args.max_files < 1 or args.max_bytes < 1:
-        print("--max-files and --max-bytes must be positive integers", file=sys.stderr)
+        _emit("--max-files and --max-bytes must be positive integers", _build_sanitizer(), stream=sys.stderr)
         return 1
-
-    bmode_dir = bmode_capture = repo = None
-    try:
-        bmode_dir, bmode_assets, bmode_capture, _ = load_bmode(args.bmode)
-        repo = bmode_assets.checkout(args.cwd)
-        if repo is None:
-            raise DiagnosticError("Run extract-assets inside a Git worktree.")
-        tracked = list_tracked_files(repo)
-    except (DiagnosticError, OSError, ValueError) as err:
-        print(_sanitize_text(str(err), repo, bmode_dir, bmode_capture, extra_paths=(args.cwd,)), file=sys.stderr)
+    ctx = _init_worktree(args)
+    if ctx is None:
         return 2
+    repo, bmode_dir, bmode_assets, bmode_capture, _, tracked, sanitizer = ctx
 
-    repo_strs = tuple(sorted({str(repo), str(repo.resolve())}, key=len, reverse=True))
     categories = {k: [] for k in ("adrs", "ci", "directives", "git_hooks", "quality", "scripts", "steering", "task_runners")}
     exclusions, excluded_paths, unclassified_count = {}, set(), 0
     truncated = {"bytes": False, "files": False, "signals": False}
@@ -730,13 +799,10 @@ def cmd_inventory(args):
         if count > 0:
             exclusions[reason] = exclusions.get(reason, 0) + count
 
-    budget = {
-        "files_read": 0, "bytes_remaining": args.max_bytes,
-        "max_files": args.max_files, "truncated": truncated, "bump": bump_exclusion,
-    }
+    budget = {"files_read": 0, "bytes_remaining": args.max_bytes, "max_files": args.max_files, "truncated": truncated, "bump": bump_exclusion}
 
     for rel_path, mode in tracked:
-        reason = exclusion_reason(rel_path, mode)
+        reason = exclusion_reason(rel_path, mode, bmode_capture)
         if reason is not None:
             excluded_paths.add(rel_path)
             bump_exclusion(reason)
@@ -746,15 +812,8 @@ def cmd_inventory(args):
             if not rel_path.startswith(".byte-stack/"):
                 unclassified_count += 1
             continue
-        if budget["files_read"] >= args.max_files:
-            truncated["files"] = True
-            bump_exclusion("max_files_limit")
+        if not _has_budget(budget):
             continue
-        if budget["bytes_remaining"] <= 0:
-            truncated["bytes"] = True
-            bump_exclusion("max_bytes_limit")
-            continue
-
         try:
             target = bmode_assets.checked(repo, rel_path.split("/"))
         except ValueError:
@@ -768,8 +827,7 @@ def cmd_inventory(args):
             if not stat.S_ISREG(st.st_mode):
                 bump_exclusion("non_regular_file")
                 continue
-            with target.open("rb") as handle:
-                raw = handle.read(budget["bytes_remaining"])
+            raw = _read_unbuffered(target, budget["bytes_remaining"])
         except OSError:
             bump_exclusion("unreadable")
             continue
@@ -784,8 +842,8 @@ def cmd_inventory(args):
             bump_exclusion("binary")
             continue
 
-        text = raw.decode("utf-8", errors="replace")
-        signals, sig_truncated, dropped = extract_signals(rel_path, text, bmode_capture, repo_strs, bucket=bucket)
+        text = _drop_unfinished_line(raw, file_truncated).decode("utf-8", errors="replace")
+        signals, sig_truncated, dropped = extract_signals(rel_path, text, sanitizer=sanitizer, bucket=bucket)
         if sig_truncated:
             file_truncated = truncated["signals"] = True
         bump_exclusion("sensitive_signals_dropped", dropped)
@@ -796,53 +854,25 @@ def cmd_inventory(args):
 
     for bucket in categories:
         categories[bucket].sort(key=lambda item: item["path"])
-
-    byte_stack_catalog, diagnostics = collect_byte_stack_inventory(
-        repo, bmode_dir, bmode_assets, bmode_capture, budget, excluded_paths
-    )
+    byte_stack_catalog, diagnostics = collect_byte_stack_inventory(repo, bmode_dir, bmode_assets, bmode_capture, budget, excluded_paths)
     output = {
-        "byte_stack": byte_stack_catalog,
-        "categories": categories,
-        "diagnostics": diagnostics,
+        "byte_stack": byte_stack_catalog, "categories": categories, "diagnostics": diagnostics,
         "exclusions": dict(sorted(exclusions.items())),
         "limits": {"max_bytes": args.max_bytes, "max_files": args.max_files, "max_signals_per_file": MAX_SIGNALS_PER_FILE},
         "schema_version": SCHEMA_VERSION,
         "summary": {
-            "bytes_read": args.max_bytes - budget["bytes_remaining"],
-            "files_read": budget["files_read"],
-            "tracked_files": len(tracked),
-            "unclassified_tracked_files": unclassified_count,
+            "bytes_read": args.max_bytes - budget["bytes_remaining"], "files_read": budget["files_read"],
+            "tracked_files": len(tracked), "unclassified_tracked_files": unclassified_count,
         },
         "truncated": truncated,
     }
-    print(json.dumps(output, indent=2, sort_keys=True) if args.pretty else json.dumps(output, sort_keys=True, separators=(",", ":")))
+    _emit(output, sanitizer, as_json=True, pretty=args.pretty)
     return 0
 
 
-def _token_pattern(needle):
-    tokens = needle.split()
-    if not tokens:
-        return None
-    body = r"\s+".join(re.escape(tok) for tok in tokens)
-    prefix = r"(?<![A-Za-z0-9_-])" if _TOKEN_CHAR_RE.match(tokens[0][0]) else ""
-    suffix = r"(?![A-Za-z0-9_-])" if _TOKEN_CHAR_RE.match(tokens[-1][-1]) else ""
-    return re.compile(prefix + body + suffix)
-
-
-def _line_command_window(file_lines, line_no, cmd):
-    """Build logical command text at 1-based line_no, handling \\ continuations and multi-line commands."""
-    idx, min_lines, parts, consumed = line_no - 1, max(1, len(cmd.splitlines())), [], 0
-    while idx < len(file_lines):
-        line = file_lines[idx]
-        idx += 1
-        consumed += 1
-        if line.rstrip().endswith("\\") and idx < len(file_lines):
-            parts.append(line.rstrip()[:-1])
-            continue
-        parts.append(line)
-        if consumed >= min_lines:
-            break
-    return " ".join(parts)
+def _verbatim_command_pattern(cmd):
+    tokens = cmd.split()
+    return re.compile(r"(?:^|[\s'\"`])" + r"\s+".join(re.escape(tok) for tok in tokens) + r"(?=$|[\s'\"`])") if tokens else None
 
 
 def _validate_rendered_reference(key_hint, norm_content, bmode_assets):
@@ -857,44 +887,40 @@ def _validate_rendered_reference(key_hint, norm_content, bmode_assets):
 def _candidate_lines_for_steering(candidate):
     if candidate["kind"] in ("playbooks", "workflows"):
         p = candidate["payload"]
-        raw_items = [p.get("title", ""), p.get("use_when", "")]
+        items = [p.get("title", ""), p.get("use_when", "")]
         for field in ("prerequisites", "steps", "verification", "guardrails"):
-            raw_items.extend(p.get(field, []))
-        return [item.strip() for item in raw_items if item and item.strip()]
+            items.extend(p.get(field, []))
+        return [item.strip() for item in items if item and item.strip()]
     return [line.strip() for line in _normalize_lf(candidate["content"]).splitlines() if line.strip() and line.strip() != "---"]
 
 
 def _check_payload_strings(prefix, payload, bmode_capture, errors):
-    """Validate UTF-8 and bare machine-local paths across payload string fields."""
+    """Validate UTF-8 and bare/non-ASCII machine-local paths across payload string fields."""
     utf8_ok = True
-    checks = []
-    for field in ("title", "use_when"):
-        if isinstance(payload.get(field), str):
-            checks.append((field, payload[field]))
-    for field in ("prerequisites", "steps", "verification", "guardrails"):
-        items = payload.get(field)
-        if isinstance(items, list):
-            for iidx, item in enumerate(items):
-                if isinstance(item, str):
-                    checks.append((f"{field}[{iidx}]", item))
+    checks = [(f, payload[f]) for f in ("title", "use_when") if isinstance(payload.get(f), str)]
+    for f in ("prerequisites", "steps", "verification", "guardrails"):
+        if isinstance(payload.get(f), list):
+            checks.extend((f"{f}[{i}]", item) for i, item in enumerate(payload[f]) if isinstance(item, str))
     for label, val in checks:
         if not _check_utf8(f"{prefix}.payload.{label}", val, errors):
             utf8_ok = False
-        elif any(p.search(val) for p in EXTRA_LOCAL_PATH_PATTERNS) and not any(
-            p.search(val) for p in bmode_capture.LOCAL_PATH_PATTERNS
-        ):
+        elif _has_local_path(val) and not any(p.search(val) for p in bmode_capture.LOCAL_PATH_PATTERNS):
             errors.append(f"{prefix}.payload: {label} must not contain a machine-local home path")
     return utf8_ok
 
 
-def validate_candidates_envelope(data, repo, bmode_dir, tracked_map, bmode_assets, bmode_capture):
+def validate_candidates_envelope(data, repo, tracked_map, bmode_assets, bmode_capture):
     """Validate candidate envelope, per-kind rules, UTF-8, safety patterns, and provenance."""
     if not isinstance(data, dict):
         return ["candidates input must be a JSON object"]
     errors = []
-    unknown_env = sorted(set(data) - ALLOWED_ENVELOPE_KEYS)
-    if unknown_env:
-        errors.append(f"unknown envelope field(s): {', '.join(unknown_env)}")
+
+    def check_unknown(obj, allowed, label):
+        extra = sorted(set(obj) - allowed)
+        if extra:
+            errors.append(f"{label} {', '.join(extra)}")
+
+    check_unknown(data, ALLOWED_ENVELOPE_KEYS, "unknown envelope field(s):")
     if "schema_version" not in data:
         errors.append("missing required field: schema_version")
     elif isinstance(data["schema_version"], bool) or data["schema_version"] != SCHEMA_VERSION:
@@ -915,9 +941,15 @@ def validate_candidates_envelope(data, repo, bmode_dir, tracked_map, bmode_asset
             _check_regular(target)
             if not target.exists():
                 raise ValueError(f"missing file in worktree: {rel_path}")
-            with target.open("rb") as handle:
-                text = handle.read(MAX_PROVENANCE_READ_BYTES).decode("utf-8", errors="replace")
-            file_cache[rel_path] = (text, text.splitlines(), re.sub(r"\\\r?\n", " ", text))
+            text = _read_unbuffered(target, MAX_PROVENANCE_READ_BYTES).decode("utf-8", errors="replace")
+            file_lines = text.splitlines()
+            if _has_structured_extractor(rel_path):
+                sigs, _, _ = extract_signals(rel_path, text, for_provenance=True)
+                cmds = [(s["line"], s["text"]) for s in sigs if s["kind"] == "command"]
+                keys = [(s["line"], s["text"]) for s in sigs if s["kind"] == "key"] + [(s["line"], s["key"]) for s in sigs if "key" in s]
+                file_cache[rel_path] = (len(file_lines), True, cmds, keys)
+            else:
+                file_cache[rel_path] = (len(file_lines), False, _logical_lines(file_lines), None)
         return file_cache[rel_path]
 
     for idx, cand in enumerate(candidates):
@@ -925,30 +957,17 @@ def validate_candidates_envelope(data, repo, bmode_dir, tracked_map, bmode_asset
         if not isinstance(cand, dict):
             errors.append(f"{prefix} must be an object")
             continue
-        unknown_c = sorted(set(cand) - ALLOWED_CANDIDATE_KEYS)
-        if unknown_c:
-            errors.append(f"{prefix} has unknown field(s): {', '.join(unknown_c)}")
+        check_unknown(cand, ALLOWED_CANDIDATE_KEYS, f"{prefix} has unknown field(s):")
         for req in ("id", "category", "kind", "key", "provenance"):
             if req not in cand:
                 errors.append(f"{prefix} missing required field: {req}")
 
-        category = cand.get("category")
-        if "category" in cand and (
-            not isinstance(category, str)
-            or (_check_utf8(f"{prefix}.category", category, errors) and category not in ALLOWED_CATEGORIES)
-        ):
-            errors.append(f"{prefix}.category must be one of: {', '.join(ALLOWED_CATEGORIES)}")
-
+        for field, allowed in (("category", ALLOWED_CATEGORIES), ("kind", ALLOWED_KINDS)):
+            val = cand.get(field)
+            if field in cand and (not isinstance(val, str) or (_check_utf8(f"{prefix}.{field}", val, errors) and val not in allowed)):
+                errors.append(f"{prefix}.{field} must be one of: {', '.join(allowed)}")
         kind = cand.get("kind")
-        valid_kind = False
-        if "kind" in cand:
-            if not isinstance(kind, str):
-                errors.append(f"{prefix}.kind must be one of: {', '.join(ALLOWED_KINDS)}")
-            elif _check_utf8(f"{prefix}.kind", kind, errors):
-                if kind in ALLOWED_KINDS:
-                    valid_kind = True
-                else:
-                    errors.append(f"{prefix}.kind must be one of: {', '.join(ALLOWED_KINDS)}")
+        valid_kind = isinstance(kind, str) and kind in ALLOWED_KINDS
 
         key, valid_str_key = cand.get("key"), False
         if "key" in cand:
@@ -962,9 +981,7 @@ def validate_candidates_envelope(data, repo, bmode_dir, tracked_map, bmode_asset
                         bmode_assets.validate_key(kind, key)
                     except ValueError as err:
                         errors.append(f"{prefix}.key: {err}")
-                    if kind in ("playbooks", "workflows") and (not (4 <= len(key) <= 120) or not bmode_capture.KEY_PATTERN.fullmatch(key)):
-                        errors.append(f"{prefix}.key must be lowercase kebab-case path ending in .md (4..120 chars)")
-                    elif kind == "references" and (not (4 <= len(key) <= 120) or not REF_KEY_PATTERN.fullmatch(key)):
+                    if kind in ("playbooks", "workflows", "references") and (not (4 <= len(key) <= 120) or not bmode_capture.KEY_PATTERN.fullmatch(key)):
                         errors.append(f"{prefix}.key must be lowercase kebab-case path ending in .md (4..120 chars)")
                     elif kind == "scripts" and (not (2 <= len(key) <= 120) or not SCRIPT_KEY_PATTERN.fullmatch(key)):
                         errors.append(f"{prefix}.key must be lowercase path (2..120 chars, alphanumeric/-/_ with optional extension)")
@@ -1003,9 +1020,7 @@ def validate_candidates_envelope(data, repo, bmode_dir, tracked_map, bmode_asset
                     if not isinstance(prov, dict):
                         errors.append(f"{pl} must be an object")
                         continue
-                    unknown_p = sorted(set(prov) - ALLOWED_PROVENANCE_KEYS)
-                    if unknown_p:
-                        errors.append(f"{pl} has unknown field(s): {', '.join(unknown_p)}")
+                    check_unknown(prov, ALLOWED_PROVENANCE_KEYS, f"{pl} has unknown field(s):")
                     ppath = prov.get("path")
                     if not isinstance(ppath, str) or not ppath.strip():
                         errors.append(f"{pl}.path must be a non-empty string")
@@ -1019,14 +1034,14 @@ def validate_candidates_envelope(data, repo, bmode_dir, tracked_map, bmode_asset
                     if ppath not in tracked_map:
                         errors.append(f"{pl}.path is not a tracked repository file: {ppath}")
                         continue
-                    excl = exclusion_reason(ppath, tracked_map[ppath])
+                    excl = exclusion_reason(ppath, tracked_map[ppath], bmode_capture)
                     if excl is not None:
                         errors.append(f"{pl}.path is excluded ({excl}): {ppath}")
                         continue
                     try:
-                        file_text, file_lines, joined_text = read_provenance_file(ppath)
+                        line_count, structured, prov_data, ext_keys = read_provenance_file(ppath)
                     except (OSError, ValueError) as err:
-                        errors.append(f"{pl}.path unreadable or unsafe: {_sanitize_text(str(err), repo, bmode_dir, bmode_capture)}")
+                        errors.append(f"{pl}.path unreadable or unsafe: {err}")
                         continue
 
                     valid_line = None
@@ -1034,23 +1049,27 @@ def validate_candidates_envelope(data, repo, bmode_dir, tracked_map, bmode_asset
                         line_no = prov["line"]
                         if isinstance(line_no, bool) or not isinstance(line_no, int) or line_no < 1:
                             errors.append(f"{pl}.line must be a positive integer")
-                        elif line_no > len(file_lines):
-                            errors.append(f"{pl}.line {line_no} exceeds {ppath} length ({len(file_lines)} lines)")
+                        elif line_no > line_count:
+                            errors.append(f"{pl}.line {line_no} exceeds {ppath} length ({line_count} lines)")
                         else:
                             valid_line = line_no
 
+                    where = f" at line {valid_line}" if valid_line is not None else ""
                     if "command" in prov:
                         cmd = prov["command"]
                         if not isinstance(cmd, str) or not cmd.strip() or len(cmd) > 400:
                             errors.append(f"{pl}.command must be a non-empty string (<= 400 chars)")
                         elif _check_utf8(f"{pl}.command", cmd, errors):
                             _check_safety_patterns(bmode_capture, f"{pl}.command", cmd, errors)
-                            pat = _token_pattern(cmd)
-                            if valid_line is not None:
-                                if not pat or not pat.search(_line_command_window(file_lines, valid_line, cmd)):
-                                    errors.append(f"{pl}.command not found at line {valid_line} in {ppath}")
-                            elif "line" not in prov and (not pat or not pat.search(joined_text)):
-                                errors.append(f"{pl}.command not found in {ppath}")
+                            if valid_line is not None or "line" not in prov:
+                                if structured:
+                                    norm_cmd = " ".join(cmd.split())
+                                    matched = any(t == norm_cmd and (valid_line is None or ln == valid_line) for ln, t in prov_data)
+                                else:
+                                    pat = _verbatim_command_pattern(cmd)
+                                    matched = bool(pat) and any((valid_line is None or ln == valid_line) and pat.search(lt) for ln, lt in prov_data)
+                                if not matched:
+                                    errors.append(f"{pl}.command not found{where} in {ppath}; cite the command text as printed by inventory, or cite path plus line")
 
                     if "key" in prov:
                         pkey = prov["key"]
@@ -1058,16 +1077,12 @@ def validate_candidates_envelope(data, repo, bmode_dir, tracked_map, bmode_asset
                             errors.append(f"{pl}.key must be a non-empty string (<= 200 chars)")
                         elif _check_utf8(f"{pl}.key", pkey, errors):
                             _check_safety_patterns(bmode_capture, f"{pl}.key", pkey, errors)
-                            segments = pkey.split(".")
-                            if any(not seg.strip() for seg in segments):
-                                errors.append(f"{pl}.key contains empty dotted segment: {pkey}")
-                            else:
-                                scope = "\n".join(file_lines[:valid_line]) if valid_line is not None else file_text
-                                missing = [s for s in segments if not _token_pattern(s).search(scope)]
-                                if missing:
-                                    errors.append(f"{pl}.key segment(s) not found in {ppath}: {', '.join(missing)}")
-                                elif valid_line is not None and not _token_pattern(segments[-1]).search(file_lines[valid_line - 1]):
-                                    errors.append(f"{pl}.key leaf '{segments[-1]}' not found at line {valid_line} in {ppath}")
+                            if not structured:
+                                errors.append(f"{pl}.key is not supported for {ppath}; cite path and line instead")
+                            elif valid_line is not None or "line" not in prov:
+                                norm_key = " ".join(pkey.split())
+                                if not any(k == norm_key and (valid_line is None or ln == valid_line) for ln, k in ext_keys):
+                                    errors.append(f"{pl}.key not found{where} in {ppath}; cite the key text as printed by inventory, or cite path plus line")
 
         if valid_kind and kind in ("playbooks", "workflows"):
             if "content" in cand:
@@ -1078,17 +1093,11 @@ def validate_candidates_envelope(data, repo, bmode_dir, tracked_map, bmode_asset
                 errors.append(f"{prefix}.payload must be an object")
             else:
                 payload = cand["payload"]
-                unknown_pl = sorted(set(payload) - ALLOWED_PAYLOAD_SUBKEYS)
-                if unknown_pl:
-                    errors.append(f"{prefix}.payload has unknown field(s): {', '.join(unknown_pl)}")
+                if set(payload) - ALLOWED_PAYLOAD_SUBKEYS:
+                    check_unknown(payload, ALLOWED_PAYLOAD_SUBKEYS, f"{prefix}.payload has unknown field(s):")
                 elif _check_payload_strings(prefix, payload, bmode_capture, errors):
-                    full_payload = {
-                        "schema_version": SCHEMA_VERSION, "kind": kind,
-                        "key": key if valid_str_key else "placeholder.md", **payload,
-                    }
-                    for perr in bmode_capture.validate_payload(full_payload):
-                        if valid_str_key or not perr.startswith("key"):
-                            errors.append(f"{prefix}.payload: {perr}")
+                    full_payload = {"schema_version": SCHEMA_VERSION, "kind": kind, "key": key if valid_str_key else "placeholder.md", **payload}
+                    errors.extend(f"{prefix}.payload: {perr}" for perr in bmode_capture.validate_payload(full_payload) if valid_str_key or not perr.startswith("key"))
         elif valid_kind and kind in ("references", "scripts"):
             if "payload" in cand:
                 errors.append(f"{prefix}.payload is not allowed for {kind}; use content")
@@ -1128,18 +1137,14 @@ def build_dedupe_context(repo, tracked_map, bmode_dir, bmode_assets):
                 raw = path.read_bytes()
                 sha, head = hashlib.sha256(raw).hexdigest(), raw[:CATALOG_HEAD_BYTES]
             else:
-                with path.open("rb") as handle:
-                    head = handle.read(CATALOG_HEAD_BYTES)
+                head = _read_unbuffered(path, CATALOG_HEAD_BYTES)
             if kind != "scripts" and path.suffix == ".md" and b"\x00" not in head:
                 head_txt = head.decode("utf-8", errors="replace")
                 try:
                     trigger, title = _inspect_markdown_head(head_txt, path, bmode_assets)
                 except ValueError:
                     title = _extract_h1(head_txt)
-            catalog_entries.append({
-                "origin": "repo", "kind": kind, "key": key, "trigger": trigger,
-                "title": title, "content_sha256": sha, "tokens": _catalog_tokens(kind, title, trigger),
-            })
+            catalog_entries.append({"origin": "repo", "kind": kind, "key": key, "trigger": trigger, "title": title, "content_sha256": sha, "tokens": _catalog_tokens(kind, title, trigger)})
 
     steering_lines, steering_sources = set(), []
     for rel_path, mode in sorted(tracked_map.items()):
@@ -1150,8 +1155,7 @@ def build_dedupe_context(repo, tracked_map, bmode_dir, bmode_assets):
             _check_regular(target)
             if not target.exists():
                 continue
-            with target.open("rb") as handle:
-                text = handle.read(MAX_PROVENANCE_READ_BYTES).decode("utf-8", errors="replace")
+            text = _read_unbuffered(target, MAX_PROVENANCE_READ_BYTES).decode("utf-8", errors="replace")
         except (OSError, ValueError):
             continue
         unbulleted = set()
@@ -1159,15 +1163,12 @@ def build_dedupe_context(repo, tracked_map, bmode_dir, bmode_assets):
             stripped = raw_line.strip()
             if stripped:
                 steering_lines.add(stripped)
-                ub = re.sub(r"^(?:[-*+]|\d+\.)\s+", "", stripped).strip()
+                ub = _BULLET_RE.sub("", stripped).strip()
                 if ub:
                     unbulleted.add(ub)
         steering_sources.append((rel_path, _tokenize(text), unbulleted))
 
-    return {
-        "bundled": bundled_by_kind, "catalog_entries": catalog_entries,
-        "steering_lines": steering_lines, "steering_sources": steering_sources,
-    }
+    return {"bundled": bundled_by_kind, "catalog_entries": catalog_entries, "steering_lines": steering_lines, "steering_sources": steering_sources}
 
 
 def _token_similarity(tokens_a, tokens_b):
@@ -1221,10 +1222,7 @@ def evaluate_dedupe(candidate, exists, is_identical, rendered_bytes, rendered_te
             reasons.append(f"same trigger or title as {entry['origin']} {entry['kind']}/{entry['key']}")
             break
 
-    verdict = next(
-        (v for v in ("exists-identical", "exists-differs", "overrides-bundled", "restates-steering", "duplicates-catalog") if v in flags),
-        "new",
-    )
+    verdict = next((v for v in ("exists-identical", "exists-differs", "overrides-bundled", "restates-steering", "duplicates-catalog") if v in flags), "new")
     if verdict == "new":
         reasons.append("no conflict with bundled catalog, existing .byte-stack/, or steering files")
 
@@ -1241,8 +1239,7 @@ def evaluate_dedupe(candidate, exists, is_identical, rendered_bytes, rendered_te
                     src = f"{entry['origin']}:{entry['kind']}/{entry['key']}"
                     similar_scores[src] = max(similar_scores.get(src, 0.0), round(max(jaccard, overlap), 2))
         body_tokens = _tokenize("\n".join(cand_lines))
-        cand_ub = [re.sub(r"^(?:[-*+]|\d+\.)\s+", "", l).strip() for l in cand_lines]
-        cand_ub = [l for l in cand_ub if l]
+        cand_ub = [ub for l in cand_lines for ub in (_BULLET_RE.sub("", l).strip(),) if ub]
         for spath, stokens, sunbulleted in ctx["steering_sources"]:
             src = f"steering:{spath}"
             shared, jaccard, overlap = _token_similarity(body_tokens, stokens)
@@ -1258,7 +1255,7 @@ def evaluate_dedupe(candidate, exists, is_identical, rendered_bytes, rendered_te
 
 
 def apply_atomic_write(repo, parts, kind, content, executable, expected_bytes, bmode_assets):
-    """Write a references/ or scripts/ file atomically with pre-replace inspection and TOCTOU guard."""
+    """Write a references/ or scripts/ file atomically with pre-replace inspection and no-clobber create."""
     target = bmode_assets.checked(repo, [".byte-stack", kind, *parts])
     _check_regular(target)
     if expected_bytes is None and target.exists():
@@ -1274,15 +1271,26 @@ def apply_atomic_write(repo, parts, kind, content, executable, expected_bytes, b
             handle.write(content)
         umask = os.umask(0)
         os.umask(umask)
-        if existing_mode is not None:
-            mode = (existing_mode | 0o111) & ~umask if (kind == "scripts" and executable is True) else existing_mode
-        else:
-            mode = (0o777 if (kind == "scripts" and executable is True) else 0o666) & ~umask
+        mode = ((existing_mode | 0o111) & ~umask if (kind == "scripts" and executable is True) else existing_mode) if existing_mode is not None else ((0o777 if (kind == "scripts" and executable is True) else 0o666) & ~umask)
         os.chmod(tmp_path, mode)
         bmode_assets.inspect_file(tmp_path, kind)
         if expected_bytes is None:
             try:
-                os.link(tmp_path, target)
+                try:
+                    os.link(tmp_path, target)
+                except OSError as err:
+                    if isinstance(err, FileExistsError) or err.errno not in LINK_FALLBACK_ERRNOS:
+                        raise
+                    out_fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), mode)
+                    created = True
+                    try:
+                        with os.fdopen(out_fd, "wb") as out_handle:
+                            out_handle.write(content.encode("utf-8"))
+                        os.chmod(target, mode)
+                        created = False
+                    finally:
+                        if created:
+                            target.unlink(missing_ok=True)
             except FileExistsError:
                 if target.is_symlink():
                     raise ValueError(f"symlink in asset path: {target}")
@@ -1300,54 +1308,44 @@ def apply_atomic_write(repo, parts, kind, content, executable, expected_bytes, b
 
 
 def _run_capture_subprocess(capture_py, subcmd_args, stdin_text=None):
-    return subprocess.run(
-        [sys.executable, "-I", str(capture_py), *subcmd_args],
-        input=stdin_text, capture_output=True, text=True,
-    )
+    return subprocess.run([sys.executable, "-I", str(capture_py), *subcmd_args], input=stdin_text, capture_output=True, text=True)
 
 
-def _blocking_dedupe_reason(cid, flags, allow_override, allow_force):
-    if "restates-steering" in flags and not allow_force:
-        return f"candidate restates steering files; pass --force {cid} to write anyway"
-    if "duplicates-catalog" in flags and not allow_force:
-        return f"candidate duplicates an existing catalog entry; pass --force {cid} to write anyway"
-    if "overrides-bundled" in flags and not (allow_override or allow_force):
-        return f"candidate overrides bundled byte-stack asset; pass --override-bundled {cid} or --force {cid}"
-    return None
+def _capture_write_args(repo, *, dry_run, allow_update, allow_force):
+    return ["write", "--stdin", "--json", "--cwd", str(repo), *(["--dry-run"] if dry_run else []), *(["--update"] if allow_update else []), *(["--force"] if allow_force else [])]
 
 
-def _unified_diff_redacted(existing_norm, rendered, target_rel, exists, repo, bmode_dir, bmode_capture):
-    raw_diff = "".join(
+def _blocking_dedupe_reason(cid, flags, allow_override, allow_duplicate):
+    parts = []
+    if "restates-steering" in flags and not allow_duplicate:
+        parts.append(f"candidate restates steering files; pass --allow-duplicate {cid} to write anyway")
+    if "duplicates-catalog" in flags and not allow_duplicate:
+        parts.append(f"candidate duplicates an existing catalog entry; pass --allow-duplicate {cid} to write anyway")
+    if "overrides-bundled" in flags and not allow_override:
+        parts.append(f"candidate overrides bundled byte-stack asset; pass --override-bundled {cid} to write anyway")
+    return "; ".join(parts) or None
+
+
+def _unified_diff(existing_norm, rendered, target_rel, exists):
+    return "".join(
         difflib.unified_diff(
             existing_norm.splitlines(keepends=True), rendered.splitlines(keepends=True),
             fromfile="/dev/null" if not exists else f"a/{target_rel}", tofile=f"b/{target_rel}",
         )
     )
-    return _redact_diff(raw_diff, repo, bmode_dir, bmode_capture), raw_diff
 
 
-def _plan_candidate(
-    cand, repo, bmode_dir, bmode_assets, bmode_capture, capture_py, dedupe_ctx, update_ids, force_ids, override_ids
-):
+def _plan_candidate(cand, repo, bmode_assets, capture_py, dedupe_ctx, update_ids, force_ids, override_ids, dup_ids):
     """Dry-run one candidate, returning (exit_code, plan_dict, error_message)."""
     cid, kind, key = cand["id"], cand["kind"], cand["key"]
     parts = bmode_assets.validate_key(kind, key)
     target_rel = f".byte-stack/{kind}/{key}"
-    allow_update, allow_force, allow_override = cid in update_ids, cid in force_ids, cid in override_ids
-
-    base_plan = {
-        "category": cand["category"], "id": cid, "key": key, "kind": kind,
-        "provenance": cand["provenance"], "relative_path": target_rel,
-    }
+    allow_update, allow_force, allow_override, allow_dup = cid in update_ids, cid in force_ids, cid in override_ids, cid in dup_ids
+    base_plan = {"category": cand["category"], "id": cid, "key": key, "kind": kind, "provenance": cand["provenance"], "relative_path": target_rel}
 
     if kind in ("playbooks", "workflows"):
         full_payload = {"schema_version": SCHEMA_VERSION, "kind": kind, "key": key, **cand["payload"]}
-        cap_args = ["write", "--stdin", "--dry-run", "--json", "--cwd", str(repo)]
-        if allow_update:
-            cap_args.append("--update")
-        if allow_force:
-            cap_args.append("--force")
-        proc = _run_capture_subprocess(capture_py, cap_args, stdin_text=json.dumps(full_payload))
+        proc = _run_capture_subprocess(capture_py, _capture_write_args(repo, dry_run=True, allow_update=allow_update, allow_force=allow_force), stdin_text=json.dumps(full_payload))
         if proc.returncode in (1, 2):
             return proc.returncode, None, (proc.stderr.strip() or proc.stdout.strip())
         try:
@@ -1357,17 +1355,18 @@ def _plan_candidate(
 
         status, plan_code = cap_res["status"], proc.returncode
         dedupe = evaluate_dedupe(cand, status != "create", status == "unchanged", None, None, dedupe_ctx)
-        diff = _redact_diff(cap_res.get("diff", ""), repo, bmode_dir, bmode_capture)
-        plan_reason = _sanitize_text(cap_res.get("reason", ""), repo, bmode_dir, bmode_capture)
+        diff, plan_reason = cap_res.get("diff", ""), cap_res.get("reason", "")
         will_write = status in ("create", "update", "force-overwrite") and plan_code == 0
-        if plan_code == 0 and status != "unchanged":
-            blocking = _blocking_dedupe_reason(cid, dedupe["dedupe_flags"], allow_override, allow_force)
+        if status != "unchanged":
+            blocking = _blocking_dedupe_reason(cid, dedupe["dedupe_flags"], allow_override, allow_dup)
             if blocking is not None:
-                status, plan_code, will_write, plan_reason = "conflict", 3, False, blocking
+                if plan_code == 3 and plan_reason:
+                    plan_reason = f"{plan_reason}; {blocking}"
+                else:
+                    status, plan_code, will_write, plan_reason = "conflict", 3, False, blocking
         return plan_code, {
-            **base_plan, "dedupe_flags": dedupe["dedupe_flags"], "diff": diff,
-            "full_payload": full_payload, "reason": plan_reason or dedupe["reason"],
-            "similar_to": dedupe["similar_to"], "status": status,
+            **base_plan, "dedupe_flags": dedupe["dedupe_flags"], "diff": diff, "full_payload": full_payload,
+            "reason": plan_reason or dedupe["reason"], "similar_to": dedupe["similar_to"], "status": status,
             "title": cand["payload"].get("title", ""), "trigger": cand["payload"].get("use_when", ""),
             "verdict": dedupe["verdict"], "verdict_reason": dedupe["reason"], "will_write": will_write,
         }, None
@@ -1383,47 +1382,34 @@ def _plan_candidate(
     rendered_bytes = rendered.encode("utf-8")
     exists, is_identical = existing_bytes is not None, existing_bytes == rendered_bytes
     dedupe = evaluate_dedupe(cand, exists, is_identical, rendered_bytes, rendered, dedupe_ctx)
-
     existing_norm = existing_bytes.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n") if exists else ""
-    diff, raw_diff = _unified_diff_redacted(existing_norm, rendered, target_rel, exists, repo, bmode_dir, bmode_capture)
+    diff = _unified_diff(existing_norm, rendered, target_rel, exists)
     line_endings_only = exists and not is_identical and existing_norm == rendered
-    if exists and not is_identical and not raw_diff:
+    if exists and not is_identical and not diff:
         note = "line endings differ (existing file uses CR/CRLF; candidate uses LF)" if line_endings_only else "file bytes differ"
         diff = f"--- a/{target_rel}\n+++ b/{target_rel}\n@@ {note} @@\n"
 
     verdict_reason = dedupe["reason"].replace("differs", "differs (line endings differ)", 1) if line_endings_only else dedupe["reason"]
-    blocking = _blocking_dedupe_reason(cid, dedupe["dedupe_flags"], allow_override, allow_force)
+    blocking = _blocking_dedupe_reason(cid, dedupe["dedupe_flags"], allow_override, allow_dup)
     if not exists:
-        status, plan_code, will_write, plan_reason = (
-            ("conflict", 3, False, blocking) if blocking else ("create", 0, True, f"new {kind[:-1]}")
-        )
+        status, plan_code, will_write, plan_reason = ("conflict", 3, False, blocking) if blocking else ("create", 0, True, f"new {kind[:-1]}")
     elif is_identical:
         status, plan_code, will_write, diff, plan_reason = "unchanged", 0, False, "", "already up to date"
     else:
         eol_note = " (line endings differ)" if line_endings_only else ""
-        if allow_force and blocking is None:
+        file_block = None if allow_force else f"refusing to overwrite differing {target_rel}{eol_note} without --force {cid}"
+        if file_block is None and blocking is None:
             status, plan_code, will_write, plan_reason = "force-overwrite", 0, True, f"forced overwrite of existing {target_rel}{eol_note}"
         else:
-            status, plan_code, will_write = "conflict", 3, False
-            plan_reason = blocking or f"refusing to overwrite differing {target_rel}{eol_note} without --force {cid}"
+            status, plan_code, will_write, plan_reason = "conflict", 3, False, "; ".join(p for p in (file_block, blocking) if p)
 
     return plan_code, {
-        **base_plan, "content_sha256": hashlib.sha256(rendered_bytes).hexdigest(),
-        "dedupe_flags": dedupe["dedupe_flags"], "diff": diff, "executable": cand.get("executable", False),
-        "expected_bytes": existing_bytes, "parts": parts, "reason": plan_reason, "rendered": rendered,
-        "similar_to": dedupe["similar_to"], "status": status,
-        "title": _extract_h1(rendered) if kind == "references" else "", "trigger": "",
-        "verdict": dedupe["verdict"], "verdict_reason": verdict_reason, "will_write": will_write,
+        **base_plan, "content_sha256": hashlib.sha256(rendered_bytes).hexdigest(), "dedupe_flags": dedupe["dedupe_flags"],
+        "diff": diff, "executable": cand.get("executable", False), "expected_bytes": existing_bytes, "parts": parts,
+        "reason": plan_reason, "rendered": rendered, "similar_to": dedupe["similar_to"], "status": status,
+        "title": _extract_h1(rendered) if kind == "references" else "", "trigger": "", "verdict": dedupe["verdict"],
+        "verdict_reason": verdict_reason, "will_write": will_write,
     }, None
-
-
-def _emit_invalid(errors, as_json):
-    if as_json:
-        print(json.dumps({"errors": errors, "status": "invalid"}, indent=2, sort_keys=True))
-    else:
-        for err in errors:
-            print(f"candidate error: {err}", file=sys.stderr)
-    return 1
 
 
 def _public_plan_item(plan, *, written=False, validated=None, resolved_origin=None):
@@ -1437,37 +1423,29 @@ def _public_plan_item(plan, *, written=False, validated=None, resolved_origin=No
 
 
 def cmd_write(args):
-    bmode_dir = bmode_capture = repo = None
-    try:
-        bmode_dir, bmode_assets, bmode_capture, capture_py = load_bmode(args.bmode)
-        repo = bmode_assets.checkout(args.cwd)
-        if repo is None:
-            raise DiagnosticError("Run extract-assets inside a Git worktree.")
-        tracked_map = dict(list_tracked_files(repo))
-    except (DiagnosticError, OSError, ValueError) as err:
-        print(_sanitize_text(str(err), repo, bmode_dir, bmode_capture, extra_paths=(args.cwd,)), file=sys.stderr)
+    ctx = _init_worktree(args)
+    if ctx is None:
         return 2
+    repo, bmode_dir, bmode_assets, bmode_capture, capture_py, tracked, sanitizer = ctx
+    tracked_map = dict(tracked)
 
     try:
-        raw = sys.stdin.read() if args.stdin else args.candidates.read_text(encoding="utf-8")
-        data = json.loads(raw)
+        data = json.loads(sys.stdin.read() if args.stdin else args.candidates.read_text(encoding="utf-8"))
     except (OSError, ValueError) as err:
-        msg = _sanitize_text(f"invalid candidates JSON: {err}", repo, bmode_dir, bmode_capture)
-        return _emit_invalid([msg], args.json) if args.json else (print(msg, file=sys.stderr) or 1)
+        return _emit_invalid([f"invalid candidates JSON: {err}"], args.json, sanitizer)
 
-    errors = validate_candidates_envelope(data, repo, bmode_dir, tracked_map, bmode_assets, bmode_capture)
-    approve_ids, update_ids, force_ids, override_ids = (
-        set(args.approve), set(args.update), set(args.force), set(args.override_bundled)
+    errors = validate_candidates_envelope(data, repo, tracked_map, bmode_assets, bmode_capture)
+    approve_ids, update_ids, force_ids, override_ids, dup_ids = (
+        set(args.approve), set(args.update), set(args.force), set(args.override_bundled), set(args.allow_duplicate)
     )
     if not args.dry_run and not approve_ids:
         errors.append("at least one --approve ID is required unless --dry-run is set")
 
     candidates = data.get("candidates", []) if isinstance(data, dict) and isinstance(data.get("candidates"), list) else []
     known_ids = {c["id"] for c in candidates if isinstance(c, dict) and isinstance(c.get("id"), str)}
-    for flag, id_set in (("--approve", approve_ids), ("--update", update_ids), ("--force", force_ids), ("--override-bundled", override_ids)):
-        unknown = sorted(id_set - known_ids)
-        if unknown:
-            errors.append(f"unknown candidate ID(s) in {flag}: {', '.join(unknown)}")
+    for flag, id_set in (("--approve", approve_ids), ("--update", update_ids), ("--force", force_ids), ("--override-bundled", override_ids), ("--allow-duplicate", dup_ids)):
+        if id_set - known_ids:
+            errors.append(f"unknown candidate ID(s) in {flag}: {', '.join(sorted(id_set - known_ids))}")
 
     selected = []
     if not errors:
@@ -1476,123 +1454,106 @@ def cmd_write(args):
         for t_parts, cid in sorted(targets.items()):
             for depth in range(2, len(t_parts)):
                 if t_parts[:depth] in targets:
-                    errors.append(
-                        f"target path collision: '{targets[t_parts[:depth]]}' cannot be both a file and parent directory of '{cid}'"
-                    )
+                    errors.append(f"target path collision: '{targets[t_parts[:depth]]}' cannot be both a file and parent directory of '{cid}'")
     if errors:
-        return _emit_invalid(errors, args.json)
+        return _emit_invalid(errors, args.json, sanitizer)
 
     try:
         dedupe_ctx = build_dedupe_context(repo, tracked_map, bmode_dir, bmode_assets)
     except (DiagnosticError, OSError, ValueError) as err:
-        print(_sanitize_text(str(err), repo, bmode_dir, bmode_capture), file=sys.stderr)
+        _emit(str(err), sanitizer, stream=sys.stderr)
         return 2
 
     planned = []
     for cand in selected:
-        code, plan, err_msg = _plan_candidate(
-            cand, repo, bmode_dir, bmode_assets, bmode_capture, capture_py,
-            dedupe_ctx, update_ids, force_ids, override_ids,
-        )
+        code, plan, err_msg = _plan_candidate(cand, repo, bmode_assets, capture_py, dedupe_ctx, update_ids, force_ids, override_ids, dup_ids)
         if code in (1, 2):
-            sanitized = _sanitize_text(err_msg or "preflight failed", repo, bmode_dir, bmode_capture)
-            return _emit_invalid([sanitized], True) if (args.json and code == 1) else (print(sanitized, file=sys.stderr) or code)
+            msg = err_msg or "preflight failed"
+            return _emit_invalid([msg], True, sanitizer) if (args.json and code == 1) else (_emit(msg, sanitizer, stream=sys.stderr) or code)
         if code == 0 and plan["status"] != "unchanged":
             dedupe_ctx["catalog_entries"].append({
-                "origin": "batch", "kind": plan["kind"], "key": plan["key"],
-                "trigger": plan["trigger"], "title": plan["title"],
-                "content_sha256": plan.get("content_sha256"),
+                "origin": "batch", "kind": plan["kind"], "key": plan["key"], "trigger": plan["trigger"],
+                "title": plan["title"], "content_sha256": plan.get("content_sha256"),
                 "tokens": _catalog_tokens(plan["kind"], plan["title"], plan["trigger"]),
             })
         planned.append((code, plan))
 
     results, had_conflict = [], False
-    if args.dry_run:
-        for code, plan in planned:
+    for code, plan in planned:
+        if args.dry_run or code == 3 or not plan["will_write"]:
             had_conflict = had_conflict or code == 3
             results.append(_public_plan_item(plan, written=False))
-    else:
-        for code, plan in planned:
-            if code == 3 or not plan["will_write"]:
-                had_conflict = had_conflict or code == 3
-                results.append(_public_plan_item(plan, written=False))
-                continue
-            cid, kind, key = plan["id"], plan["kind"], plan["key"]
-            validated = None
-            if kind in ("playbooks", "workflows"):
-                cap_args = ["write", "--stdin", "--json", "--cwd", str(repo)]
-                if cid in update_ids:
-                    cap_args.append("--update")
-                if cid in force_ids:
-                    cap_args.append("--force")
-                proc = _run_capture_subprocess(capture_py, cap_args, stdin_text=json.dumps(plan["full_payload"]))
+            continue
+        cid, kind, key = plan["id"], plan["kind"], plan["key"]
+        validated, real_plan, did_write = None, plan, True
+        if kind in ("playbooks", "workflows"):
+            proc = _run_capture_subprocess(capture_py, _capture_write_args(repo, dry_run=False, allow_update=cid in update_ids, allow_force=cid in force_ids), stdin_text=json.dumps(plan["full_payload"]))
+            if proc.returncode not in (0, 3):
+                _emit(proc.stderr.strip() or proc.stdout.strip(), sanitizer, stream=sys.stderr)
+                return proc.returncode
+            try:
+                cap_res = json.loads(proc.stdout)
+            except ValueError as err:
                 if proc.returncode == 3:
                     had_conflict = True
-                    late_plan = dict(plan, status="conflict")
-                    try:
-                        late_res = json.loads(proc.stdout)
-                        late_plan["reason"] = _sanitize_text(late_res.get("reason", "target conflicted during write"), repo, bmode_dir, bmode_capture)
-                        late_plan["diff"] = _redact_diff(late_res.get("diff", ""), repo, bmode_dir, bmode_capture)
-                    except ValueError:
-                        late_plan["reason"] = _sanitize_text(proc.stderr.strip() or proc.stdout.strip() or "target conflicted during write", repo, bmode_dir, bmode_capture)
-                    results.append(_public_plan_item(late_plan, written=False))
+                    results.append(_public_plan_item(dict(plan, status="conflict", reason=proc.stderr.strip() or proc.stdout.strip() or "target conflicted during write"), written=False))
                     continue
-                if proc.returncode != 0:
-                    print(_sanitize_text(proc.stderr.strip() or proc.stdout.strip(), repo, bmode_dir, bmode_capture), file=sys.stderr)
-                    return proc.returncode
-                val_proc = subprocess.run(
-                    [sys.executable, "-I", str(capture_py), "validate", f".byte-stack/{kind}/{key}", "--kind", kind, "--json"],
-                    cwd=str(repo), capture_output=True, text=True,
-                )
-                if val_proc.returncode != 0:
-                    msg = _sanitize_text(val_proc.stderr.strip() or val_proc.stdout.strip(), repo, bmode_dir, bmode_capture)
-                    print(f"post-write validation failed for {cid}: {msg}", file=sys.stderr)
-                    return val_proc.returncode
-                validated = True
-            else:
-                try:
-                    apply_atomic_write(repo, plan["parts"], kind, plan["rendered"], plan["executable"], plan["expected_bytes"], bmode_assets)
-                except TargetChangedError:
-                    had_conflict = True
-                    late_plan = dict(plan, status="conflict", reason=f"target changed on disk after preflight: {plan['relative_path']}")
-                    target = repo / ".byte-stack" / kind / key
-                    try:
-                        if target.exists() and not target.is_symlink() and stat.S_ISREG(target.lstat().st_mode):
-                            cur_norm = target.read_bytes().decode("utf-8", errors="replace").replace("\r\n", "\n")
-                            late_plan["diff"], _ = _unified_diff_redacted(cur_norm, plan["rendered"], plan["relative_path"], True, repo, bmode_dir, bmode_capture)
-                    except OSError:
-                        pass
-                    results.append(_public_plan_item(late_plan, written=False))
-                    continue
-                except (DiagnosticError, OSError, ValueError) as err:
-                    print(_sanitize_text(str(err), repo, bmode_dir, bmode_capture), file=sys.stderr)
-                    return 2
-
-            origin, _ = bmode_assets.resolve(repo, kind, key, bmode_dir)
-            if origin != "repo":
-                print(f"post-write resolve did not return repo for {cid}", file=sys.stderr)
+                _emit(f"capture_playbook.py returned non-JSON: {err}", sanitizer, stream=sys.stderr)
                 return 2
-            results.append(_public_plan_item(plan, written=True, validated=validated, resolved_origin=origin))
+            if proc.returncode == 3:
+                had_conflict = True
+                results.append(_public_plan_item(dict(plan, status="conflict", reason=cap_res.get("reason", "target conflicted during write"), diff=cap_res.get("diff", "")), written=False))
+                continue
+            real_status = cap_res.get("status", plan["status"])
+            did_write = real_status in ("create", "update", "force-overwrite")
+            real_plan = dict(plan, status=real_status, diff=cap_res.get("diff", ""), reason=cap_res.get("reason", plan["reason"]))
+            val_proc = subprocess.run([sys.executable, "-I", str(capture_py), "validate", f".byte-stack/{kind}/{key}", "--kind", kind, "--json"], cwd=str(repo), capture_output=True, text=True)
+            if val_proc.returncode != 0:
+                _emit(f"post-write validation failed for {cid}: {val_proc.stderr.strip() or val_proc.stdout.strip()}", sanitizer, stream=sys.stderr)
+                return val_proc.returncode
+            validated = True
+        else:
+            try:
+                apply_atomic_write(repo, plan["parts"], kind, plan["rendered"], plan["executable"], plan["expected_bytes"], bmode_assets)
+            except TargetChangedError:
+                had_conflict = True
+                late_plan = dict(plan, status="conflict", reason=f"target changed on disk after preflight: {plan['relative_path']}")
+                target = repo / ".byte-stack" / kind / key
+                try:
+                    if target.exists() and not target.is_symlink() and stat.S_ISREG(target.lstat().st_mode):
+                        late_plan["diff"] = _unified_diff(target.read_bytes().decode("utf-8", errors="replace").replace("\r\n", "\n"), plan["rendered"], plan["relative_path"], True)
+                except OSError:
+                    pass
+                results.append(_public_plan_item(late_plan, written=False))
+                continue
+            except (DiagnosticError, OSError, ValueError) as err:
+                _emit(str(err), sanitizer, stream=sys.stderr)
+                return 2
+
+        origin, _ = bmode_assets.resolve(repo, kind, key, bmode_dir)
+        if origin != "repo":
+            _emit(f"post-write resolve did not return repo for {cid}", sanitizer, stream=sys.stderr)
+            return 2
+        results.append(_public_plan_item(real_plan, written=did_write, validated=validated, resolved_origin=origin))
 
     exit_code = 3 if had_conflict else 0
     if args.json:
-        print(json.dumps({
-            "dry_run": args.dry_run, "results": results,
-            "schema_version": SCHEMA_VERSION, "status": "conflict" if had_conflict else "ok",
-        }, indent=2, sort_keys=True))
+        _emit({"dry_run": args.dry_run, "results": results, "schema_version": SCHEMA_VERSION, "status": "conflict" if had_conflict else "ok"}, sanitizer, as_json=True)
     else:
-        prefix = "dry-run " if args.dry_run else ""
-        for item in results:
-            print(f"{prefix}{item['status']}: {item['relative_path']} [verdict={item['verdict']}] ({item['reason']})")
+        clean_results, out_lines, prefix = _sanitize_value(results, sanitizer), [], ("dry-run " if args.dry_run else "")
+        for item in clean_results:
+            out_lines.append(f"{prefix}{item['status']}: {item['relative_path']} [verdict={item['verdict']}] ({item['reason']})")
             if item["similar_to"]:
-                print("  similar_to: " + ", ".join(f"{s['source']} ({s['score']})" for s in item["similar_to"]))
+                out_lines.append("  similar_to: " + ", ".join(f"{s['source']} ({s['score']})" for s in item["similar_to"]))
             if item["diff"]:
-                print(item["diff"], end="" if item["diff"].endswith("\n") else "\n")
+                out_lines.append(item["diff"].rstrip("\n"))
+        if out_lines:
+            _emit("\n".join(out_lines), sanitizer)
     return exit_code
 
 
 def cmd_schema():
-    print(SCHEMA_PATH.read_text(encoding="utf-8"), end="")
+    _emit(SCHEMA_PATH.read_text(encoding="utf-8"), _build_sanitizer(), end="")
     return 0
 
 
@@ -1618,10 +1579,14 @@ def build_parser():
     src.add_argument("--candidates", type=Path, help="Path to JSON file matching extract-candidates.schema.json")
     src.add_argument("--stdin", action="store_true", help="Read candidates JSON from stdin")
     wr_p.add_argument("--dry-run", action="store_true", help="Preview verdicts and diffs without writing")
-    wr_p.add_argument("--approve", action="append", default=[], metavar="ID", help="Candidate ID (kind/key) approved to write")
-    wr_p.add_argument("--update", action="append", default=[], metavar="ID", help="Candidate ID allowed to update an unmodified managed playbook/workflow")
-    wr_p.add_argument("--override-bundled", action="append", default=[], metavar="ID", help="Candidate ID allowed to override a bundled byte-stack asset")
-    wr_p.add_argument("--force", action="append", default=[], metavar="ID", help="Candidate ID allowed to overwrite differing/manual files or dedupe blocks")
+    for flag, help_text in (
+        ("--approve", "Candidate ID (kind/key) approved to write"),
+        ("--update", "Candidate ID allowed to update an unmodified managed playbook/workflow"),
+        ("--override-bundled", "Candidate ID allowed to override a bundled byte-stack asset"),
+        ("--allow-duplicate", "Candidate ID allowed despite restates-steering or duplicates-catalog"),
+        ("--force", "Candidate ID allowed to overwrite differing/manual files"),
+    ):
+        wr_p.add_argument(flag, action="append", default=[], metavar="ID", help=help_text)
     wr_p.add_argument("--json", action="store_true", help="Print structured JSON result")
     wr_p.add_argument("--cwd", type=Path, default=Path.cwd(), help="Directory inside target Git worktree")
     return parser
@@ -1629,11 +1594,7 @@ def build_parser():
 
 def main():
     args = build_parser().parse_args()
-    if args.command == "inventory":
-        return cmd_inventory(args)
-    if args.command == "write":
-        return cmd_write(args)
-    return cmd_schema()
+    return cmd_inventory(args) if args.command == "inventory" else (cmd_write(args) if args.command == "write" else cmd_schema())
 
 
 if __name__ == "__main__":

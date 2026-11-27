@@ -374,7 +374,7 @@ class ExtractAssetsTests(unittest.TestCase):
             (json.dumps(envelope(make_reference_candidate(provenance=[{"path": "untracked.txt"}]))), "not a tracked"),
             (json.dumps(envelope(make_reference_candidate(provenance=[{"path": ".env"}]))), "excluded"),
             (json.dumps(envelope(make_reference_candidate(provenance=[{"path": "Makefile", "command": "cargo test"}]))), "command not found"),
-            (json.dumps(envelope(make_reference_candidate(provenance=[{"path": "ruff.toml", "key": "lint.nonexistent"}]))), "segment(s) not found"),
+            (json.dumps(envelope(make_reference_candidate(provenance=[{"path": "ruff.toml", "key": "lint.nonexistent"}]))), "key not found"),
             (json.dumps(envelope(make_reference_candidate(provenance=[{"path": "ruff.toml", "line": 999}]))), "exceeds"),
         ]
         for raw, expected in invalid_cases:
@@ -488,14 +488,20 @@ class ExtractAssetsTests(unittest.TestCase):
         self.assertEqual(vs_res["results"][0]["verdict"], "restates-steering")
         self.assertFalse((self.local / "references/verbatim-agents.md").exists())
 
-        # --force overrides restates-steering for that ID.
+        # --allow-duplicate overrides restates-steering for that ID (while --force alone does not).
+        self.extract(
+            "write", "--stdin", "--approve", "references/verbatim-agents.md",
+            "--force", "references/verbatim-agents.md", "--json", code=3,
+            stdin_text=json.dumps(envelope(verbatim_steering)),
+        )
+        self.assertFalse((self.local / "references/verbatim-agents.md").exists())
         vs_forced = json.loads(
             self.extract(
                 "write",
                 "--stdin",
                 "--approve",
                 "references/verbatim-agents.md",
-                "--force",
+                "--allow-duplicate",
                 "references/verbatim-agents.md",
                 "--json",
                 stdin_text=json.dumps(envelope(verbatim_steering)),
@@ -748,9 +754,9 @@ class ExtractAssetsTests(unittest.TestCase):
         for py_file in (SKILLS / "extract-assets/scripts/extract_assets.py", Path(__file__).resolve()):
             ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file), feature_version=(3, 9))
 
-        # A7: script stays strictly smaller than the 1,761-line review baseline.
+        # A7 / fix2: script stays at or under the 1,640-line cap.
         script_lines = (SKILLS / "extract-assets/scripts/extract_assets.py").read_text(encoding="utf-8").splitlines()
-        self.assertLess(len(script_lines), 1761)
+        self.assertLessEqual(len(script_lines), 1640)
 
         # A8: if SKILL.md advertises argument-hint, its body defines both arguments.
         skill_text = skill_md.read_text(encoding="utf-8")
@@ -759,13 +765,19 @@ class ExtractAssetsTests(unittest.TestCase):
             self.assertIn("--dry-run", skill_text)
             self.assertRegex(skill_text, r"(?i)restrict|filter|only that category|stop after")
 
-        # A9, A3, A5: ADR and README reflect local-only checks, no-op identical flag, and mid-run I/O note.
+        # A9, A3, A5, R2: ADR, guide, and README reflect local-only checks, no-op identical flag, mid-run I/O note, and rename window.
         adr_text = (ROOT / "docs/adr/byte-stack-extract.md").read_text(encoding="utf-8")
+        guide_text = (SKILLS / "extract-assets/references/extract-assets.md").read_text(encoding="utf-8")
         readme_text = (ROOT / "plugins/byte-stack/README.md").read_text(encoding="utf-8")
         self.assertNotIn("Local + CI", adr_text)
         self.assertIn("exists-identical", adr_text)
         self.assertIn("exists-identical", readme_text)
         self.assertRegex(adr_text, r"(?i)unexpected i/o|mid-run")
+        for doc in (adr_text, guide_text):
+            self.assertRegex(doc, r"(?i)no-clobber")
+            self.assertRegex(doc, r"(?i)can be lost")
+            self.assertNotIn("turning post-preflight changes into", doc)
+            self.assertNotIn("so post-preflight changes become", doc)
 
     def test_inventory_redaction_budgets_exclusions_and_lean_output(self):
         # B1: compact JSON by default; --pretty produces indented JSON.
@@ -1220,6 +1232,444 @@ class ExtractAssetsTests(unittest.TestCase):
         self.assertEqual(by_id[unrelated_ref["id"]]["status"], "create")
         self.assertTrue(by_id[unrelated_ref["id"]]["written"])
         self.assertTrue((self.local / "references/unrelated-after-race.md").is_file())
+
+    def test_r1_output_boundary_non_ascii_home_partial_line_and_root_prefix(self):
+        token = "ghp_" + ("A" * 20)
+        home = "/home/sample-user"
+
+        # Secret marker in tracked paths is excluded from inventory, not emitted redacted.
+        self.add_tracked_file(f"scripts/{token}.sh", "#!/bin/sh\n# Harmless summary\n", executable=True)
+        self.add_tracked_file(f"docs/directives/{token}.md", "# Shared package conventions\n")
+
+        # Whole-path-prefix repo root matching: docs/<root without leading slash>/Makefile stays intact,
+        # while a real repo-root path inside a trigger is redacted to <repo>.
+        root_no_slash = str(self.repo.resolve()).lstrip("/")
+        root_named_mk = f"docs/{root_no_slash}/Makefile"
+        self.add_tracked_file(root_named_mk, "check:\n\tpython3 -m unittest\n")
+        (self.local / "playbooks").mkdir(parents=True, exist_ok=True)
+        (self.local / "playbooks/root-trig.md").write_text(
+            f"# Root trigger\n\nUse when: Inspect {self.repo} {home} {token}\n", encoding="utf-8"
+        )
+
+        inv_res = self.extract("inventory")
+        self.assertNotIn(token, inv_res.stdout)
+        self.assertNotIn(home, inv_res.stdout)
+        inv_without_fixture_path = inv_res.stdout.replace(root_named_mk, "")
+        self.assertNotIn(str(self.repo), inv_without_fixture_path)
+        self.assertNotIn(str(self.repo.resolve()), inv_without_fixture_path)
+        inv = json.loads(inv_res.stdout)
+        trig = next(e["trigger"] for e in inv["byte_stack"]["playbooks"] if e["key"] == "root-trig.md")
+        self.assertEqual(trig, "Inspect <repo> <local-path> <redacted-secret>")
+        all_paths = [f["path"] for files in inv["categories"].values() for f in files]
+        self.assertNotIn(f"scripts/{token}.sh", all_paths)
+        self.assertNotIn(f"docs/directives/{token}.md", all_paths)
+        self.assertFalse(any("<redacted-secret>" in p for p in all_paths))
+        self.assertIn(root_named_mk, all_paths)
+
+        # Fixture file under docs/<root without leading slash>/Makefile is accepted as provenance.
+        root_path_cand = make_reference_candidate(
+            key="root-prefix-ok.md",
+            content="# Root prefix\n\nProvenance path containing the root segment stays valid.\n",
+            provenance=[{"path": root_named_mk, "command": "python3 -m unittest", "line": 2}],
+        )
+        rp_out = json.loads(
+            self.extract("write", "--stdin", "--dry-run", "--json", stdin_text=json.dumps(envelope(root_path_cand))).stdout
+        )
+        self.assertEqual(rp_out["results"][0]["status"], "create")
+        self.assertEqual(rp_out["results"][0]["provenance"][0]["path"], root_named_mk)
+
+        # Secret marker in duplicate filename must not leak in verdict_reason.
+        (self.local / "scripts").mkdir(parents=True, exist_ok=True)
+        dup_scr = make_script_candidate(key="dup-check.sh")
+        (self.local / f"scripts/{token}.sh").write_text(dup_scr["content"], encoding="utf-8")
+        dup_out = self.extract("write", "--stdin", "--dry-run", "--json", code=3, stdin_text=json.dumps(envelope(dup_scr)))
+        self.assertNotIn(token, dup_out.stdout + dup_out.stderr)
+        dup_data = json.loads(dup_out.stdout)
+        self.assertEqual(dup_data["results"][0]["verdict"], "duplicates-catalog")
+        self.assertNotIn(token, dup_data["results"][0]["verdict_reason"])
+
+        # Secret marker and home path echoed in unknown-field validation errors are redacted in JSON and stderr.
+        bad_field_cand = make_reference_candidate()
+        bad_field_cand[f"unused-{token}{home}"] = True
+        for extra in (["--dry-run", "--json"], ["--dry-run"]):
+            err_res = self.extract("write", "--stdin", *extra, code=1, stdin_text=json.dumps(envelope(bad_field_cand)))
+            self.assertNotIn(token, err_res.stdout + err_res.stderr)
+            self.assertNotIn(home, err_res.stdout + err_res.stderr)
+
+        # Repo root inside an accepted provenance command must not leak in preview JSON or text output.
+        # Use a /tmp-rooted repo when available so the checkout path itself is not under /home/.
+        tmp_base = Path("/tmp") if Path("/tmp").is_dir() else self.temp
+        with tempfile.TemporaryDirectory(dir=tmp_base) as root_dir:
+            root_repo = Path(root_dir) / "repo-root-prov"
+            root_repo.mkdir()
+            self.run_command(["git", "init", "-q", root_repo], root_repo)
+            (root_repo / "Makefile").write_text(f"check:\n\tgit -C {root_repo} status\n", encoding="utf-8")
+            self.run_command(["git", "add", "Makefile"], root_repo)
+            root_prov_cand = make_script_candidate(
+                key="root-prov.sh",
+                provenance=[{"path": "Makefile", "line": 2, "command": f"git -C {root_repo} status"}],
+            )
+            for extra in (["--dry-run", "--json"], ["--dry-run"]):
+                res_rp = self.extract("write", "--stdin", "--cwd", str(root_repo), *extra, stdin_text=json.dumps(envelope(root_prov_cand)))
+                self.assertNotIn(str(root_repo), res_rp.stdout + res_rp.stderr)
+                self.assertNotIn(str(root_repo.resolve()), res_rp.stdout + res_rp.stderr)
+
+        # Non-ASCII home paths rejected across write and dropped/redacted in inventory.
+        for literal in ("/home/équipe", "/Users/josé", "C:\\Users\\équipe"):
+            with self.subTest(literal=literal):
+                cand = make_reference_candidate(content=f"# Guide\n\nInspect {literal} locally.\n")
+                out = self.extract("write", "--stdin", "--dry-run", "--json", code=1, stdin_text=json.dumps(envelope(cand)))
+                self.assertIn("machine-local", out.stdout)
+                self.assertNotIn(literal, out.stdout + out.stderr)
+
+        # Signal cut mid-line by --max-bytes drops the unfinished line and sets truncation flag.
+        cut_repo = self.temp / "cut-repo"
+        self.run_command(["git", "init", "-q", cut_repo], self.temp)
+        (cut_repo / "docs/directives").mkdir(parents=True)
+        (cut_repo / "docs/directives/cut.md").write_text(f"# Safe heading {token}\n", encoding="utf-8")
+        self.run_command(["git", "add", "docs/directives/cut.md"], cut_repo)
+        limit = len("# Safe heading ghp_") + 15
+        cut_inv = json.loads(self.extract("inventory", "--cwd", str(cut_repo), "--max-bytes", str(limit)).stdout)
+        self.assertTrue(cut_inv["truncated"]["bytes"])
+        self.assertEqual(cut_inv["categories"]["directives"][0]["signals"], [])
+        self.assertNotIn("ghp_", json.dumps(cut_inv))
+
+        # Long script summary clipped to MAX_SIGNAL_TEXT_LEN sets truncated flags honestly.
+        (cut_repo / "scripts").mkdir(parents=True)
+        (cut_repo / "scripts/long.sh").write_text("# " + ("x" * 230) + "\n", encoding="utf-8")
+        self.run_command(["git", "add", "scripts/long.sh"], cut_repo)
+        long_inv = json.loads(self.extract("inventory", "--cwd", str(cut_repo)).stdout)
+        long_entry = long_inv["categories"]["scripts"][0]
+        self.assertTrue(long_entry["truncated"])
+        self.assertTrue(long_inv["truncated"]["signals"])
+
+    def test_r3_unbuffered_byte_budget_and_env_segment_exclusion(self):
+        # .env* exclusion applies to every path segment (including .envrc/Makefile).
+        self.add_tracked_file(".envrc/Makefile", "all:\n\techo envrc\n")
+        self.add_tracked_file("sub/.envrc/tool.sh", "#!/bin/sh\necho envrc\n", executable=True)
+        inv = json.loads(self.extract("inventory").stdout)
+        all_paths = [f["path"] for files in inv["categories"].values() for f in files]
+        self.assertNotIn(".envrc/Makefile", all_paths)
+        self.assertNotIn("sub/.envrc/tool.sh", all_paths)
+        self.assertGreaterEqual(inv["exclusions"].get("secret_file", 0), 2)
+        envrc_cand = make_reference_candidate(provenance=[{"path": ".envrc/Makefile"}])
+        envrc_err = self.extract("write", "--stdin", "--dry-run", "--json", code=1, stdin_text=json.dumps(envelope(envrc_cand)))
+        self.assertIn("excluded", envrc_err.stdout)
+
+        # Kernel file-descriptor offset after reading must not exceed the byte budget or 4 KiB catalog cap.
+        read_probe = (
+            "import json, os, runpy, sys\n"
+            "from io import StringIO\n"
+            "from pathlib import Path\n"
+            "from unittest.mock import patch\n"
+            "cli, repo = Path(sys.argv[1]), Path(sys.argv[2])\n"
+            "offsets = {}\n"
+            "orig_open = Path.open\n"
+            "class Tracked:\n"
+            "    def __init__(self, p, h):\n"
+            "        self._p, self._h = p, h\n"
+            "    def __enter__(self):\n"
+            "        self._h.__enter__()\n"
+            "        return self\n"
+            "    def __exit__(self, *a):\n"
+            "        try:\n"
+            "            offsets[str(self._p)] = max(offsets.get(str(self._p), 0), os.lseek(self._h.fileno(), 0, os.SEEK_CUR))\n"
+            "        except OSError:\n"
+            "            pass\n"
+            "        return self._h.__exit__(*a)\n"
+            "    def __getattr__(self, name):\n"
+            "        return getattr(self._h, name)\n"
+            "def wrapped_open(self, *a, **kw):\n"
+            "    h = orig_open(self, *a, **kw)\n"
+            "    if str(self).startswith(str(repo)):\n"
+            "        return Tracked(self, h)\n"
+            "    return h\n"
+            "m = runpy.run_path(str(cli))\n"
+            "with patch.object(Path, 'open', wrapped_open), patch.object(sys, 'stdout', StringIO()) as out:\n"
+            "    rc = m['cmd_inventory'](m['build_parser']().parse_args(sys.argv[3:]))\n"
+            "print(json.dumps({'rc': rc, 'offsets': offsets, 'inv': json.loads(out.getvalue())}))\n"
+        )
+        budget_repo = self.temp / "budget-repo"
+        self.run_command(["git", "init", "-q", budget_repo], self.temp)
+        big_script = budget_repo / "scripts/size.sh"
+        big_script.parent.mkdir(parents=True)
+        big_script.write_text("# " + ("x" * 8192) + "\n", encoding="utf-8")
+        self.run_command(["git", "add", "scripts/size.sh"], budget_repo)
+        res1 = self.run_command(
+            [sys.executable, "-I", "-c", read_probe, str(self.extract_script), str(budget_repo),
+             "inventory", "--cwd", str(budget_repo), "--max-bytes", "1"],
+            self.nested,
+        )
+        d1 = json.loads(res1.stdout)
+        self.assertEqual(d1["rc"], 0)
+        self.assertEqual(d1["offsets"].get(str(big_script.resolve())), 1)
+
+        cat_repo = self.temp / "cat-budget-repo"
+        self.run_command(["git", "init", "-q", cat_repo], self.temp)
+        cat_pb = cat_repo / ".byte-stack/playbooks/size.md"
+        cat_pb.parent.mkdir(parents=True)
+        cat_pb.write_text("# Sample\n\nUse when: fixture\n" + ("x" * 8192) + "\n", encoding="utf-8")
+        res2 = self.run_command(
+            [sys.executable, "-I", "-c", read_probe, str(self.extract_script), str(cat_repo),
+             "inventory", "--cwd", str(cat_repo)],
+            self.nested,
+        )
+        d2 = json.loads(res2.stdout)
+        self.assertEqual(d2["rc"], 0)
+        self.assertEqual(d2["offsets"].get(str(cat_pb.resolve())), 4096)
+
+    def test_r4_provenance_extractor_single_source_of_truth_and_round_trip(self):
+        # Package.json with earlier matching property name and escaped quotes in script command.
+        self.add_tracked_file(
+            "package.json",
+            '{\n  "name": "check",\n  "scripts": {\n    "check": "printf \\"hello\\""\n  }\n}\n',
+        )
+        # Multi-line run: | workflow step (including backslash continuation).
+        self.add_tracked_file(
+            ".github/workflows/ci.yml",
+            "name: CI\non: [push]\njobs:\n  test:\n    steps:\n"
+            "      - uses: actions/checkout@v4\n"
+            "      - run: |\n"
+            "          pytest -q\n"
+            "          ruff check \\\n"
+            "            --select E,F .\n",
+        )
+        # Makefile with modifier, path-prefixed command, and backslash continuation.
+        self.add_tracked_file(
+            "Makefile",
+            "all:\n\t./tools/verify suite\n\t@-go test ./...\n\tgit status \\\n\t  --short\n",
+        )
+        # TOML with unrelated earlier section.
+        self.add_tracked_file("ruff.toml", "[tool.ruff]\n[another]\nline-length = 80\n")
+        # JSON hooks config.
+        self.add_tracked_file(".claude/settings.json", '{"hooks": {"PreToolUse": [{"command": "node scripts/hook.js"}]}}\n')
+        # Shell file with path-prefixed command.
+        self.add_tracked_file("scripts/run.sh", "#!/bin/sh\n./tools/verify suite\n", executable=True)
+
+        inv = json.loads(self.extract("inventory").stdout)
+
+        # Round-trip property: EVERY command and key signal emitted by inventory validates at its emitted line.
+        round_trip_provs = []
+        for files in inv["categories"].values():
+            for entry in files:
+                for sig in entry["signals"]:
+                    if sig["kind"] == "command":
+                        prov = {"path": entry["path"], "command": sig["text"], "line": sig["line"]}
+                        if "key" in sig:
+                            prov["key"] = sig["key"]
+                        round_trip_provs.append(prov)
+                    elif sig["kind"] == "key":
+                        round_trip_provs.append({"path": entry["path"], "key": sig["text"], "line": sig["line"]})
+        self.assertGreaterEqual(len(round_trip_provs), 10)
+        for i in range(0, len(round_trip_provs), 20):
+            batch = round_trip_provs[i : i + 20]
+            rt_cand = make_reference_candidate(key=f"rt-{i}.md", provenance=batch)
+            rt_res = json.loads(
+                self.extract("write", "--stdin", "--dry-run", "--json", stdin_text=json.dumps(envelope(rt_cand))).stdout
+            )
+            self.assertEqual(rt_res["results"][0]["status"], "create", batch)
+
+        # Check specific package.json line & escaped-quote signal.
+        pkg = next(f for f in inv["categories"]["task_runners"] if f["path"] == "package.json")
+        check_sig = next(s for s in pkg["signals"] if s["kind"] == "command" and s.get("key") == "scripts.check")
+        self.assertEqual(check_sig["line"], 4)
+        self.assertEqual(check_sig["text"], 'printf "hello"')
+        wrong_pkg_line = make_reference_candidate(
+            provenance=[{"path": "package.json", "command": check_sig["text"], "key": "scripts.check", "line": 2}]
+        )
+        self.extract("write", "--stdin", "--dry-run", "--json", code=1, stdin_text=json.dumps(envelope(wrong_pkg_line)))
+
+        # Accepted cases: Make @- modifier, Make backslash continuation (single & multi-line), valid TOML section key.
+        for ok_prov in (
+            {"path": "Makefile", "line": 3, "command": "go test ./..."},
+            {"path": "Makefile", "line": 4, "command": "git status --short"},
+            {"path": "Makefile", "line": 4, "command": "git status\n--short"},
+            {"path": "ruff.toml", "line": 3, "key": "another.line-length"},
+            {"path": "scripts/run.sh", "line": 2, "command": "./tools/verify suite"},
+        ):
+            with self.subTest(ok_prov=ok_prov):
+                c = make_reference_candidate(provenance=[ok_prov])
+                r = json.loads(self.extract("write", "--stdin", "--dry-run", "--json", stdin_text=json.dumps(envelope(c))).stdout)
+                self.assertEqual(r["results"][0]["status"], "create")
+
+        # Rejected cases: partial Make/shell command, wrong TOML section, shifted line, key on prose/shell.
+        self.add_tracked_file("scripts/shifted.mk", "check:\n\tgit status\n")
+        for bad_prov in (
+            {"path": "Makefile", "line": 2, "command": "verify suite"},
+            {"path": "scripts/run.sh", "line": 2, "command": "verify suite"},
+            {"path": "ruff.toml", "line": 3, "key": "tool.ruff.line-length"},
+            {"path": "scripts/shifted.mk", "line": 1, "command": "git\nstatus"},
+            {"path": "CONTRIBUTING.md", "key": "Contributing"},
+            {"path": "scripts/run.sh", "key": "verify"},
+        ):
+            with self.subTest(bad_prov=bad_prov):
+                c = make_reference_candidate(provenance=[bad_prov])
+                out = self.extract("write", "--stdin", "--dry-run", "--json", code=1, stdin_text=json.dumps(envelope(c)))
+                errs = json.loads(out.stdout)["errors"]
+                self.assertTrue(any("path" in e and "line" in e for e in errs), errs)
+
+    def test_r5_catalog_walker_validates_keys_strict_utf8_and_head_truncation(self):
+        pb_dir = self.local / "playbooks"
+        pb_dir.mkdir(parents=True, exist_ok=True)
+        (pb_dir / "bad:name.md").write_text("# Bad\n\nUse when: Verify bad key\n", encoding="utf-8")
+        (pb_dir / "invalid.md").write_bytes(b"# Docs\n\nUse when: sample\xff\n")
+        # Multi-byte UTF-8 character ('é' = 2 bytes) straddling the 4096-byte boundary after a valid trigger.
+        prefix = "# Split\n\nUse when: Valid trigger before split.\n"
+        pad = "a" * ((4095 - len(prefix)) % 2)
+        filler = "é" * ((4200 - len(prefix) - len(pad)) // 2)
+        (pb_dir / "split-utf8.md").write_text(prefix + pad + filler + "\n", encoding="utf-8")
+        # Trigger cut at the 4 KiB head boundary.
+        (pb_dir / "cut-trigger.md").write_text("# Late\n\nUse when: " + ("z" * 4100) + "\n", encoding="utf-8")
+
+        inv = json.loads(self.extract("inventory").stdout)
+        repo_pbs = {e["key"]: e for e in inv["byte_stack"]["playbooks"] if e["origin"] == "repo"}
+        self.assertNotIn("bad:name.md", repo_pbs)
+        self.assertNotIn("invalid.md", repo_pbs)
+        self.assertNotIn("cut-trigger.md", repo_pbs)
+        self.assertIn("split-utf8.md", repo_pbs)
+        self.assertEqual(repo_pbs["split-utf8.md"]["trigger"], "Valid trigger before split.")
+        self.assertTrue(inv["truncated"]["bytes"])
+        msgs = [d["message"] for d in inv["diagnostics"]]
+        self.assertTrue(any("bad:name.md" in m for m in msgs), msgs)
+        self.assertTrue(any("invalid.md" in m or "utf-8" in m.lower() for m in msgs), msgs)
+        self.assertTrue(any("cut-trigger.md" in m for m in msgs), msgs)
+        self.assertFalse(any("split-utf8.md" in m for m in msgs), msgs)
+
+    def test_r6_r7_r8_link_fallback_late_capture_noop_and_steering_file_conflict(self):
+        # R6: fallback to exclusive open when os.link raises EOPNOTSUPP (clean create, intervening file, intervening symlink).
+        link_helper = (
+            "import errno, os, runpy, sys\n"
+            "from pathlib import Path\n"
+            "from types import SimpleNamespace\n"
+            "from unittest.mock import patch\n"
+            "cli, repo, mode = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]\n"
+            "m = runpy.run_path(str(cli))\n"
+            "g = m['cmd_write'].__globals__\n"
+            "target = repo / '.byte-stack/references/link-fb.md'\n"
+            "def no_link(src, dst, *a, **kw):\n"
+            "    if mode == 'file':\n"
+            "        target.write_text('# Intervening human file\\n', encoding='utf-8')\n"
+            "    elif mode == 'symlink':\n"
+            "        target.symlink_to(repo / 'Makefile')\n"
+            "    raise OSError(errno.EOPNOTSUPP, 'no hard links', str(dst))\n"
+            "fake_os = SimpleNamespace(**{**vars(os), 'link': no_link})\n"
+            "with patch.dict(g, {'os': fake_os}):\n"
+            "    sys.exit(m['cmd_write'](m['build_parser']().parse_args(sys.argv[4:])))\n"
+        )
+        fb_cand = make_reference_candidate(key="link-fb.md")
+        fb_target = self.local / "references/link-fb.md"
+        r6_ok = self.run_command(
+            [sys.executable, "-I", "-c", link_helper, str(self.extract_script), str(self.repo), "clean",
+             "write", "--stdin", "--json", "--cwd", str(self.repo), "--approve", fb_cand["id"]],
+            self.nested, stdin_text=json.dumps(envelope(fb_cand)),
+        )
+        self.assertEqual(json.loads(r6_ok.stdout)["results"][0]["status"], "create")
+        self.assertEqual(fb_target.read_text(encoding="utf-8"), fb_cand["content"])
+        self.assertEqual(list(fb_target.parent.glob(".extract-*")), [])
+        fb_target.unlink()
+
+        r6_file = self.run_command(
+            [sys.executable, "-I", "-c", link_helper, str(self.extract_script), str(self.repo), "file",
+             "write", "--stdin", "--json", "--cwd", str(self.repo), "--approve", fb_cand["id"]],
+            self.nested, code=3, stdin_text=json.dumps(envelope(fb_cand)),
+        )
+        self.assertEqual(json.loads(r6_file.stdout)["results"][0]["status"], "conflict")
+        self.assertEqual(fb_target.read_text(encoding="utf-8"), "# Intervening human file\n")
+        self.assertEqual(list(fb_target.parent.glob(".extract-*")), [])
+        fb_target.unlink()
+
+        r6_sym = self.run_command(
+            [sys.executable, "-I", "-c", link_helper, str(self.extract_script), str(self.repo), "symlink",
+             "write", "--stdin", "--json", "--cwd", str(self.repo), "--approve", fb_cand["id"]],
+            self.nested, code=2, stdin_text=json.dumps(envelope(fb_cand)),
+        )
+        self.assertIn("symlink", r6_sym.stderr.lower())
+        self.assertTrue(fb_target.is_symlink())
+        self.assertEqual(list(fb_target.parent.glob(".extract-*")), [])
+        fb_target.unlink()
+
+        # R7: late identical capture write reports unchanged and written=False.
+        noop_helper = (
+            "import json, runpy, sys\n"
+            "from pathlib import Path\n"
+            "from unittest.mock import patch\n"
+            "cli, repo = Path(sys.argv[1]), Path(sys.argv[2])\n"
+            "m = runpy.run_path(str(cli))\n"
+            "g = m['cmd_write'].__globals__\n"
+            "orig = g['_run_capture_subprocess']\n"
+            "def interleave(exe, cargs, stdin_text=None):\n"
+            "    if cargs[0] == 'write' and '--dry-run' not in cargs:\n"
+            "        _, _, cap, _ = g['load_bmode'](None)\n"
+            "        payload = json.loads(stdin_text)\n"
+            "        t = repo / '.byte-stack' / payload['kind'] / payload['key']\n"
+            "        t.parent.mkdir(parents=True, exist_ok=True)\n"
+            "        t.write_text(cap.render_playbook(payload), encoding='utf-8')\n"
+            "    return orig(exe, cargs, stdin_text=stdin_text)\n"
+            "with patch.dict(g, {'_run_capture_subprocess': interleave}):\n"
+            "    sys.exit(m['cmd_write'](m['build_parser']().parse_args(sys.argv[3:])))\n"
+        )
+        late_pb = make_playbook_candidate(key="late-noop.md")
+        r7 = self.run_command(
+            [sys.executable, "-I", "-c", noop_helper, str(self.extract_script), str(self.repo),
+             "write", "--stdin", "--json", "--cwd", str(self.repo), "--approve", late_pb["id"]],
+            self.nested, stdin_text=json.dumps(envelope(late_pb)),
+        )
+        r7_item = json.loads(r7.stdout)["results"][0]
+        self.assertEqual(r7_item["status"], "unchanged")
+        self.assertFalse(r7_item["written"])
+        self.assertEqual(r7_item["diff"], "")
+
+        # R8: candidate that restates steering AND targets a hand-edited file reports both conflicts and splits flags.
+        (self.local / "references").mkdir(parents=True, exist_ok=True)
+        (self.local / "playbooks").mkdir(parents=True, exist_ok=True)
+        hand_ref = self.local / "references/steer-edit.md"
+        hand_ref.write_text("# Hand-edited ref\n\nKeep manual notes.\n", encoding="utf-8")
+        hand_pb = self.local / "playbooks/steer-edit.md"
+        hand_pb.write_text("# Hand-edited pb\n\nUse when: Keep manual playbook.\n", encoding="utf-8")
+        steer_ref = make_reference_candidate(
+            key="steer-edit.md",
+            content="# Steering restate\n\nRestates AGENTS.md.\n",
+            provenance=[{"path": "AGENTS.md", "line": 1}],
+        )
+        steer_pb = make_playbook_candidate(
+            key="steer-edit.md",
+            title="Steering restate",
+            use_when="Follow rules copied from AGENTS.md.",
+            provenance=[{"path": "AGENTS.md", "line": 1}],
+        )
+        raw_r8 = json.dumps(envelope(steer_ref, steer_pb))
+        dry_r8 = json.loads(self.extract("write", "--stdin", "--dry-run", "--json", code=3, stdin_text=raw_r8).stdout)
+        for item in dry_r8["results"]:
+            self.assertEqual(item["status"], "conflict")
+            self.assertIn("exists-differs", item["dedupe_flags"])
+            self.assertIn("restates-steering", item["dedupe_flags"])
+            self.assertIn("steering", item["reason"].lower())
+            self.assertIn("--force", item["reason"])
+            self.assertIn("--allow-duplicate", item["reason"])
+            self.assertIn("Keep manual", item["diff"])
+
+        # Passing only --force OR only --allow-duplicate still conflicts and preserves both hand-edited files.
+        for single_flag in ("--force", "--allow-duplicate"):
+            self.extract(
+                "write", "--stdin", "--json",
+                "--approve", steer_ref["id"], "--approve", steer_pb["id"],
+                single_flag, steer_ref["id"], single_flag, steer_pb["id"],
+                code=3, stdin_text=raw_r8,
+            )
+            self.assertIn("Keep manual notes.", hand_ref.read_text(encoding="utf-8"))
+            self.assertIn("Keep manual playbook.", hand_pb.read_text(encoding="utf-8"))
+
+        # Passing both --force and --allow-duplicate succeeds.
+        both_ok = json.loads(
+            self.extract(
+                "write", "--stdin", "--json",
+                "--approve", steer_ref["id"], "--approve", steer_pb["id"],
+                "--force", steer_ref["id"], "--force", steer_pb["id"],
+                "--allow-duplicate", steer_ref["id"], "--allow-duplicate", steer_pb["id"],
+                stdin_text=raw_r8,
+            ).stdout
+        )
+        self.assertTrue(all(r["status"] == "force-overwrite" and r["written"] for r in both_ok["results"]))
 
 
 if __name__ == "__main__":
