@@ -170,6 +170,22 @@ class AssetTests(unittest.TestCase):
         self.assertIn("CODING_STANDARDS.md", output)
         self.assertNotIn("{{", output.split("## Report", 1)[0])
 
+    def test_every_brief_tells_delegates_to_write_rerunnable_probes(self):
+        rule = "takes the checkout path as its first argument"
+        common = {"TASK_ID": "fixture", "RUN_DIR": str(self.temp), "REPO_ROOT": str(self.repo), "EXTRA_CONSTRAINTS": "none"}
+        for role, values in (
+            ("reviewer", {"BASE": "base", "HEAD": "head", "GOAL": "goal", "ISSUE": "none"}),
+            ("scout", {"QUESTIONS": "1. one", "CONSUMER": "reviewer", "START_AREAS": "unknown"}),
+        ):
+            with self.subTest(role=role):
+                data = self.temp / f"{role}.json"
+                data.write_text(json.dumps({**common, **values}))
+                output = self.run_command([sys.executable, "-I", self.bundle / "references/briefs/fill-brief.py", role,
+                                           "--values", data], self.nested)
+                self.assertIn(rule, output)
+                self.assertIn(str(self.temp), output.split(rule, 1)[1].split("\n", 1)[0])
+                self.assertIn("exact command that reruns it", output)
+
 
 if __name__ == "__main__":
     unittest.main()

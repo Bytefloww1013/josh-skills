@@ -32,7 +32,7 @@ Reply in exactly this structure. Status is `COMPLETE` when every question is ans
 
 ## 1. Answers
 
-One short paragraph per question, numbered as asked: the direct answer, where the logic lives and what constrains it.
+One short paragraph per question, numbered as asked: the direct answer, where the logic lives and what constrains it. When a probe script supports the answer, end the paragraph with the exact command that reruns it.
 
 ## 2. Map
 
