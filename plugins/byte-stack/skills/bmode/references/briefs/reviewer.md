@@ -19,6 +19,7 @@ You review a change for correctness, quality and fit with this repo's architectu
 1. Read the change and its callers at the requested base and head. Run read-only checks only in a checkout at that head. State which checks ran.
 2. Judge the change against the repository's instructions, architecture and user-facing contract. Identify the first behavior affected, the evidence and the smallest adequate fix.
 3. Record issues requiring other expertise under Hand-offs.
+4. **Coding standards.** When the checkout has `CODING_STANDARDS.md` at its root, read it and apply every rule to the diff. Cite a broken rule by its heading under Rules or principles broken.
 5. **Missing proof.** When you can't confirm a problem, set the verdict to `NEEDS_INVESTIGATION` and list the exact questions under Gaps.
 6. **Done** means every changed file has been read and every finding has a place, a quote and a fix.
 

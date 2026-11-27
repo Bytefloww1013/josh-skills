@@ -156,6 +156,20 @@ class AssetTests(unittest.TestCase):
         self.assertIn("PASS", self.run_command(
             [sys.executable, "-I", briefs / "check-report.py", "reviewer", report], self.nested))
 
+    def test_bundled_reviewer_brief_applies_the_repo_coding_standards(self):
+        brief = (SKILLS / "bmode/references/briefs/reviewer.md").read_text(encoding="utf-8")
+        rules = brief.split("## Reviewer rules", 1)[1].split("\n## ", 1)[0]
+        numbers = [int(line.split(".", 1)[0]) for line in rules.splitlines() if line[:1].isdigit()]
+        self.assertEqual(numbers, list(range(1, len(numbers) + 1)))
+        self.assertIn("CODING_STANDARDS.md", rules)
+        data = self.temp / "values.json"
+        data.write_text(json.dumps({"TASK_ID": "fixture", "RUN_DIR": str(self.temp), "REPO_ROOT": str(self.repo), "BASE": "base",
+                                     "HEAD": "head", "GOAL": "goal", "ISSUE": "none", "EXTRA_CONSTRAINTS": "none"}))
+        output = self.run_command([sys.executable, "-I", self.bundle / "references/briefs/fill-brief.py", "reviewer",
+                                   "--values", data], self.nested)
+        self.assertIn("CODING_STANDARDS.md", output)
+        self.assertNotIn("{{", output.split("## Report", 1)[0])
+
 
 if __name__ == "__main__":
     unittest.main()

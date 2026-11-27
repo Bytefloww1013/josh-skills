@@ -41,7 +41,7 @@ Constraints inherited from [byte-stack-assets.md](byte-stack-assets.md) and [byt
 | `FF-EXT-1` | Inventory classification, exclusions, bounded reads, determinism, root absence, broken `.byte-stack` diagnostics | `python3 -I tests/test_byte_stack_extract.py` | Local |
 | `FF-EXT-2` | Provenance checks, all 3 dedupe sources, symlink/secret/local-path guards, `--dry-run`, approval gates, idempotency, manual-edit protection | `python3 -I tests/test_byte_stack_extract.py` | Local |
 | `FF-EXT-3` | Packaging, manifests (`2.2.0`), zero hooks, forbidden terms, Antigravity/Codex/Claude installs | `python3 tests/test_byte_stack_distribution.py && python3 tests/test_antigravity_plugin_install.py` | Local |
-| `FF-EXT-4` | Existing asset and capture contracts unchanged | `python3 tests/test_byte_stack_assets.py && python3 tests/test_byte_stack_capture.py` | Local |
+| `FF-EXT-4` | Existing asset and capture contracts unchanged; capture's home-path guard has no exemption (`test_schema_and_payload_validation`, `test_strict_validate_command_and_golden_hash`) | `python3 tests/test_byte_stack_assets.py && python3 tests/test_byte_stack_capture.py` | Local |
 
 ## Revisit when
 
