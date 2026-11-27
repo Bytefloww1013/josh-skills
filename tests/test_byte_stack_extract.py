@@ -28,7 +28,7 @@ def make_playbook_candidate(
         "category": category,
         "kind": "playbooks",
         "key": key,
-        "provenance": provenance or [{"path": "Makefile", "command": "python3 -m unittest", "line": 4}],
+        "provenance": provenance or [{"path": "Makefile", "command": "python3 -m unittest", "line": 3}],
         "rationale": rationale,
         "payload": {
             "title": title,
@@ -747,6 +747,479 @@ class ExtractAssetsTests(unittest.TestCase):
         # Python 3.9 syntax check via ast.parse(..., feature_version=(3, 9)).
         for py_file in (SKILLS / "extract-assets/scripts/extract_assets.py", Path(__file__).resolve()):
             ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file), feature_version=(3, 9))
+
+        # A7: script stays strictly smaller than the 1,761-line review baseline.
+        script_lines = (SKILLS / "extract-assets/scripts/extract_assets.py").read_text(encoding="utf-8").splitlines()
+        self.assertLess(len(script_lines), 1761)
+
+        # A8: if SKILL.md advertises argument-hint, its body defines both arguments.
+        skill_text = skill_md.read_text(encoding="utf-8")
+        if any(line.startswith("argument-hint:") for line in skill_lines):
+            self.assertIn("category", skill_text.lower())
+            self.assertIn("--dry-run", skill_text)
+            self.assertRegex(skill_text, r"(?i)restrict|filter|only that category|stop after")
+
+        # A9, A3, A5: ADR and README reflect local-only checks, no-op identical flag, and mid-run I/O note.
+        adr_text = (ROOT / "docs/adr/byte-stack-extract.md").read_text(encoding="utf-8")
+        readme_text = (ROOT / "plugins/byte-stack/README.md").read_text(encoding="utf-8")
+        self.assertNotIn("Local + CI", adr_text)
+        self.assertIn("exists-identical", adr_text)
+        self.assertIn("exists-identical", readme_text)
+        self.assertRegex(adr_text, r"(?i)unexpected i/o|mid-run")
+
+    def test_inventory_redaction_budgets_exclusions_and_lean_output(self):
+        # B1: compact JSON by default; --pretty produces indented JSON.
+        compact = self.extract("inventory")
+        self.assertEqual(len(compact.stdout.strip().splitlines()), 1)
+        pretty = self.extract("inventory", "--pretty")
+        self.assertGreater(len(pretty.stdout.strip().splitlines()), 10)
+        self.assertEqual(json.loads(compact.stdout), json.loads(pretty.stdout))
+
+        # B1: scripts emit at most one summary signal (first comment/docstring line) and do not trip truncated.signals.
+        self.add_tracked_file(
+            "scripts/multi.py",
+            "#!/usr/bin/env python3\n"
+            '"""Build release bundle."""\n'
+            "# Second comment ignored\n"
+            "def alpha():\n    pass\n"
+            "def beta():\n    pass\n"
+            "def gamma():\n    pass\n",
+            executable=True,
+        )
+        # B3: .claude/settings.json is hooks config, not steering.
+        self.add_tracked_file(
+            ".claude/settings.json",
+            '{"hooks": {"PreToolUse": [{"command": "node scripts/hook.js"}]}}\n',
+        )
+        # A2: directory-segment exclusions (.local) and non-home absolute paths (C2) stay visible.
+        self.add_tracked_file("scripts/.local/verify.sh", "#!/bin/sh\necho local\n", executable=True)
+        self.add_tracked_file("docs/directives/paths.md", "# Logs /var/lib/fixture/results\n\nSafe body.\n")
+
+        inv = json.loads(self.extract("inventory").stdout)
+        script_paths = [f["path"] for f in inv["categories"]["scripts"]]
+        self.assertNotIn("scripts/.local/verify.sh", script_paths)
+        self.assertIn(".claude/settings.json", [f["path"] for f in inv["categories"]["git_hooks"]])
+        self.assertNotIn(".claude/settings.json", [f["path"] for f in inv["categories"]["steering"]])
+        multi = next(f for f in inv["categories"]["scripts"] if f["path"] == "scripts/multi.py")
+        self.assertEqual(len(multi["signals"]), 1)
+        self.assertEqual(multi["signals"][0]["line"], 2)
+        self.assertIn("Build release bundle.", multi["signals"][0]["text"])
+        self.assertFalse(multi["truncated"])
+        self.assertFalse(inv["truncated"]["signals"])
+        self.assertIn("/var/lib/fixture/results", json.dumps(inv))
+
+        # B3: citing .claude/settings.json alone must not trigger restates-steering.
+        hook_ref = make_reference_candidate(
+            key="hook-policy.md",
+            content="# Hook policy\n\nUse PreToolUse hooks defined in settings.\n",
+            provenance=[{"path": ".claude/settings.json", "key": "hooks.PreToolUse"}],
+        )
+        hook_res = json.loads(
+            self.extract("write", "--stdin", "--dry-run", "--json", stdin_text=json.dumps(envelope(hook_ref))).stdout
+        )
+        self.assertEqual(hook_res["results"][0]["verdict"], "new")
+
+        # A1, A2, C2, C4: catalog redaction, catalog exclusions, and bounded 4 KiB head + shared budget.
+        fake_token = "sk-" + ("m" * 21)
+        (self.local / "playbooks").mkdir(parents=True, exist_ok=True)
+        (self.local / "references/vendor").mkdir(parents=True, exist_ok=True)
+        (self.local / "scripts").mkdir(parents=True, exist_ok=True)
+        (self.local / "playbooks/sensitive.md").write_text(
+            f"# Sensitive\n\nUse when: Inspect {fake_token} /home/fixture/file {self.repo}\n",
+            encoding="utf-8",
+        )
+        tail_marker = "catalog-tail-marker"
+        (self.local / "playbooks/large.md").write_text(
+            "# Large\n" + ("x" * 1024 + "\n") * 8 + f"Use when: {tail_marker}\n",
+            encoding="utf-8",
+        )
+        (self.local / "references/vendor/readme.md").write_text("# Vendored\n", encoding="utf-8")
+        (self.local / "references/readme.local.md").write_text("# Local\n", encoding="utf-8")
+        (self.local / "references/secret.key").write_text("SECRET_KEY_BODY\n", encoding="utf-8")
+        (self.local / "scripts/credentials.json").write_text('{"token": "abc"}\n', encoding="utf-8")
+
+        inv_full = self.extract("inventory")
+        self.assertNotIn(fake_token, inv_full.stdout)
+        self.assertNotIn("/home/fixture/file", inv_full.stdout)
+        self.assertNotIn(str(self.repo), inv_full.stdout)
+        self.assertNotIn(str(self.repo.resolve()), inv_full.stdout)
+        self.assertNotIn(tail_marker, inv_full.stdout)
+        full_data = json.loads(inv_full.stdout)
+        repo_keys = [
+            (k, e["key"]) for k, entries in full_data["byte_stack"].items() for e in entries if e["origin"] == "repo"
+        ]
+        self.assertNotIn(("references", "vendor/readme.md"), repo_keys)
+        self.assertNotIn(("references", "readme.local.md"), repo_keys)
+        self.assertNotIn(("references", "secret.key"), repo_keys)
+        self.assertNotIn(("scripts", "credentials.json"), repo_keys)
+        self.assertTrue(any("large.md" in d["message"] for d in full_data["diagnostics"]))
+
+        # Shared budget with --max-files 1 --max-bytes 1 must not read catalog files or leak root.
+        inv_tiny = self.extract("inventory", "--max-files", "1", "--max-bytes", "1")
+        tiny_data = json.loads(inv_tiny.stdout)
+        self.assertEqual(tiny_data["summary"]["files_read"], 1)
+        self.assertEqual(tiny_data["summary"]["bytes_read"], 1)
+        self.assertNotIn(str(self.repo), inv_tiny.stdout)
+        self.assertEqual(
+            [e["key"] for entries in tiny_data["byte_stack"].values() for e in entries if e["origin"] == "repo"],
+            [],
+        )
+
+        # A2: binary files are charged to --max-files / --max-bytes before discarding.
+        bin_repo = self.temp / "bin-repo"
+        self.run_command(["git", "init", "-q", bin_repo], self.temp)
+        for i in range(4):
+            p = bin_repo / f"scripts/{i}.sh"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(b"\x00" + b"x" * 200)
+            self.run_command(["git", "add", "-f", f"scripts/{i}.sh"], bin_repo)
+        bin_inv = json.loads(self.extract("inventory", "--cwd", str(bin_repo), "--max-files", "2", "--max-bytes", "100").stdout)
+        self.assertLessEqual(bin_inv["summary"]["files_read"], 2)
+        self.assertLessEqual(bin_inv["summary"]["bytes_read"], 100)
+        self.assertEqual(bin_inv["exclusions"].get("binary"), 1)
+        self.assertEqual(bin_inv["exclusions"].get("max_bytes_limit", 0) + bin_inv["exclusions"].get("max_files_limit", 0), 3)
+
+    def test_provenance_boundaries_line_scoping_and_package_signals(self):
+        # A4: package.json inventory emits citable command & key separately.
+        inv = json.loads(self.extract("inventory").stdout)
+        pkg = next(f for f in inv["categories"]["task_runners"] if f["path"] == "package.json")
+        test_sig = next(s for s in pkg["signals"] if s["kind"] == "command" and "vitest run" in s["text"])
+        self.assertEqual(test_sig["text"], "vitest run")
+        self.assertEqual(test_sig.get("key"), "scripts.test")
+
+        pkg_cand = make_reference_candidate(
+            key="pkg-test.md",
+            content="# Package test\n\nRun vitest for JS packages.\n",
+            provenance=[{"path": "package.json", "command": test_sig["text"], "key": test_sig["key"], "line": test_sig["line"]}],
+        )
+        ok = json.loads(self.extract("write", "--stdin", "--dry-run", "--json", stdin_text=json.dumps(envelope(pkg_cand))).stdout)
+        self.assertEqual(ok["results"][0]["verdict"], "new")
+
+        # A4: token boundaries and line scoping reject loose substring/wrong-line provenance.
+        self.add_tracked_file(
+            "scripts/multi-cmd.mk",
+            "check:\n\tdev-guardtest suite\n\tpython3 -m \\\n\t  unittest\n",
+        )
+        bad_sub = make_reference_candidate(
+            provenance=[{"path": "scripts/multi-cmd.mk", "command": "guardtest suite", "line": 1}],
+        )
+        self.extract("write", "--stdin", "--dry-run", "--json", code=1, stdin_text=json.dumps(envelope(bad_sub)))
+
+        bad_sub_right_line = make_reference_candidate(
+            provenance=[{"path": "scripts/multi-cmd.mk", "command": "guardtest suite", "line": 2}],
+        )
+        self.extract("write", "--stdin", "--dry-run", "--json", code=1, stdin_text=json.dumps(envelope(bad_sub_right_line)))
+
+        bad_wrong_line = make_reference_candidate(
+            provenance=[{"path": "scripts/multi-cmd.mk", "command": "dev-guardtest suite", "line": 1}],
+        )
+        self.extract("write", "--stdin", "--dry-run", "--json", code=1, stdin_text=json.dumps(envelope(bad_wrong_line)))
+
+        bad_key_sub = make_reference_candidate(
+            provenance=[{"path": "ruff.toml", "key": "length"}],
+        )
+        self.extract("write", "--stdin", "--dry-run", "--json", code=1, stdin_text=json.dumps(envelope(bad_key_sub)))
+
+        bad_key_line = make_reference_candidate(
+            provenance=[{"path": "ruff.toml", "key": "lint.select", "line": 1}],
+        )
+        self.extract("write", "--stdin", "--dry-run", "--json", code=1, stdin_text=json.dumps(envelope(bad_key_line)))
+
+        # Multi-line backslash-continued command passes at its starting line.
+        good_multiline = make_reference_candidate(
+            provenance=[{"path": "scripts/multi-cmd.mk", "command": "python3 -m unittest", "line": 3}],
+        )
+        good_res = json.loads(
+            self.extract("write", "--stdin", "--dry-run", "--json", stdin_text=json.dumps(envelope(good_multiline))).stdout
+        )
+        self.assertEqual(good_res["results"][0]["verdict"], "new")
+
+    def test_dedupe_bytes_crlf_same_content_steering_batch_and_similar_to(self):
+        # A5: byte-identical script under a different key is duplicates-catalog (conflict).
+        (self.local / "scripts").mkdir(parents=True, exist_ok=True)
+        (self.local / "scripts/old.sh").write_bytes(b"printf 'hello\\n'\n")
+        dup_scr = make_script_candidate(key="new.sh", content="printf 'hello\\n'\n")
+        dup_res = json.loads(
+            self.extract("write", "--stdin", "--dry-run", "--json", code=3, stdin_text=json.dumps(envelope(dup_scr))).stdout
+        )
+        self.assertEqual(dup_res["results"][0]["verdict"], "duplicates-catalog")
+        self.assertEqual(dup_res["results"][0]["status"], "conflict")
+
+        # A5: unbulleted lines matching bulleted steering + fresh line is NOT hard restates-steering, only soft similar_to.
+        self.add_tracked_file(
+            "AGENTS.md",
+            "# House rules\n\n- Rule Alpha\n- Rule Beta\n- Rule Gamma\n- Rule Delta\n",
+        )
+        unbulleted = make_reference_candidate(
+            key="unbulleted.md",
+            content="Rule Alpha\nRule Beta\nRule Gamma\nRule Delta\nA fresh rule\n",
+            provenance=[{"path": "Makefile"}],
+        )
+        ub_res = json.loads(
+            self.extract("write", "--stdin", "--dry-run", "--json", stdin_text=json.dumps(envelope(unbulleted))).stdout
+        )
+        self.assertEqual(ub_res["results"][0]["verdict"], "new")
+        self.assertEqual(ub_res["results"][0]["status"], "create")
+        self.assertTrue(any(s["source"] == "steering:AGENTS.md" for s in ub_res["results"][0]["similar_to"]))
+
+        # A5, C10: CRLF on disk vs LF candidate reports exists-differs / conflict and mentions line endings.
+        (self.local / "references").mkdir(parents=True, exist_ok=True)
+        crlf_path = self.local / "references/python-style.md"
+        ref = make_reference_candidate()
+        crlf_bytes = ref["content"].replace("\n", "\r\n").encode("utf-8")
+        crlf_path.write_bytes(crlf_bytes)
+        crlf_res = json.loads(
+            self.extract("write", "--stdin", "--dry-run", "--json", code=3, stdin_text=json.dumps(envelope(ref))).stdout
+        )
+        self.assertEqual(crlf_res["results"][0]["verdict"], "exists-differs")
+        self.assertEqual(crlf_res["results"][0]["status"], "conflict")
+        self.assertIn("line ending", (crlf_res["results"][0]["reason"] + crlf_res["results"][0]["diff"]).lower())
+        self.assertEqual(crlf_path.read_bytes(), crlf_bytes)
+        crlf_path.unlink()
+
+        # C9: two playbooks in one batch with same title & trigger -> second is duplicates-catalog in preview and write.
+        pb1 = make_playbook_candidate(key="unique-one.md", title="Unique flow", use_when="Run unique flow across packages.")
+        pb2 = make_playbook_candidate(key="unique-two.md", title="Unique flow", use_when="Run unique flow across packages.")
+        batch_raw = json.dumps(envelope(pb1, pb2))
+        dry_batch = json.loads(self.extract("write", "--stdin", "--dry-run", "--json", code=3, stdin_text=batch_raw).stdout)
+        self.assertEqual([r["status"] for r in dry_batch["results"]], ["create", "conflict"])
+        self.assertEqual([r["verdict"] for r in dry_batch["results"]], ["new", "duplicates-catalog"])
+        wr_batch = json.loads(
+            self.extract(
+                "write", "--stdin", "--approve", pb1["id"], "--approve", pb2["id"], "--json", code=3, stdin_text=batch_raw
+            ).stdout
+        )
+        self.assertEqual([r["status"] for r in wr_batch["results"]], ["create", "conflict"])
+        self.assertTrue((self.local / "playbooks/unique-one.md").is_file())
+        self.assertFalse((self.local / "playbooks/unique-two.md").exists())
+
+        # B2: scoped similar_to (branch-naming ref silent against opening-a-pr playbook; script silent against references; cap at 3).
+        branch_ref = make_reference_candidate(
+            key="branch-naming.md",
+            content="# Branch naming\n\nUse Conventional Commit type to match the pull request branch descriptor.\n",
+            provenance=[{"path": "CONTRIBUTING.md"}],
+        )
+        br_res = json.loads(
+            self.extract("write", "--stdin", "--dry-run", "--json", stdin_text=json.dumps(envelope(branch_ref))).stdout
+        )
+        self.assertFalse(any("opening-a-pr.md" in s["source"] for s in br_res["results"][0]["similar_to"]))
+
+        short_scr = make_script_candidate(
+            key="check-brief.sh",
+            content="#!/bin/sh\n# implementor brief report status checks\necho done\n",
+        )
+        scr_res = json.loads(
+            self.extract("write", "--stdin", "--dry-run", "--json", stdin_text=json.dumps(envelope(short_scr))).stdout
+        )
+        self.assertEqual(scr_res["results"][0]["similar_to"], [])
+
+        # Cap similar_to at 3 even when >3 references share title tokens.
+        for i in range(5):
+            (self.local / f"references/style-{i}.md").write_text(f"# Python formatting style guide {i}\n\nNotes.\n", encoding="utf-8")
+        style_cand = make_reference_candidate(
+            key="style-new.md",
+            content="# Python formatting style guide\n\nDetails.\n",
+        )
+        st_res = json.loads(
+            self.extract("write", "--stdin", "--dry-run", "--json", stdin_text=json.dumps(envelope(style_cand))).stdout
+        )
+        self.assertLessEqual(len(st_res["results"][0]["similar_to"]), 3)
+
+    def test_write_safety_redacted_diffs_bare_home_and_malformed_types(self):
+        # A1: existing sensitive file diff is visibly redacted for both references and playbooks.
+        marker = "ghp_" + ("A" * 20)
+        (self.local / "references").mkdir(parents=True, exist_ok=True)
+        (self.local / "references/python-style.md").write_text(
+            f"# Python style\n\nSafe context line.\n{marker}\n", encoding="utf-8"
+        )
+        ref = make_reference_candidate()
+        ref_dry = json.loads(
+            self.extract("write", "--stdin", "--dry-run", "--json", code=3, stdin_text=json.dumps(envelope(ref))).stdout
+        )
+        self.assertNotIn(marker, ref_dry["results"][0]["diff"])
+        self.assertIn("REDACTED", ref_dry["results"][0]["diff"])
+        self.assertIn("Safe context line.", ref_dry["results"][0]["diff"])
+
+        (self.local / "playbooks").mkdir(parents=True, exist_ok=True)
+        (self.local / "playbooks/release-notes.md").write_text(
+            f"# Release notes\n\nUse when: Prepare release notes.\n\nToken: {marker}\n", encoding="utf-8"
+        )
+        pb = make_playbook_candidate()
+        pb_dry = json.loads(
+            self.extract("write", "--stdin", "--dry-run", "--json", code=3, stdin_text=json.dumps(envelope(pb))).stdout
+        )
+        self.assertNotIn(marker, pb_dry["results"][0]["diff"])
+        self.assertIn("REDACTED", pb_dry["results"][0]["diff"])
+
+        # C7: bare /home/<user>, /Users/<user>, and C:\Users\<user> without trailing slash rejected across all 4 kinds and inventory.
+        bare_cases = [
+            ("pb-home", make_playbook_candidate(steps=["Use /home/fixture for state"])),
+            ("wf-users", make_workflow_candidate(steps=["Inspect /Users/fixture before release"])),
+            ("ref-home", make_reference_candidate(content="# Notes\n\nDir is /home/fixture.\n")),
+            ("scr-win", make_script_candidate(content="#!/bin/sh\necho 'C:\\Users\\fixture'\n")),
+        ]
+        for label, cand in bare_cases:
+            with self.subTest(label=label):
+                out = self.extract("write", "--stdin", "--dry-run", "--json", code=1, stdin_text=json.dumps(envelope(cand)))
+                data = json.loads(out.stdout)
+                self.assertTrue(any("machine-local" in e for e in data["errors"]), data)
+        self.add_tracked_file("docs/directives/bare-home.md", "# Guide /home/fixture\n\n# Safe title\n")
+        inv_bare = self.extract("inventory")
+        self.assertNotIn("/home/fixture", inv_bare.stdout)
+        self.assertIn("Safe title", inv_bare.stdout)
+
+        # A6, C8: malformed key types and lone surrogates return structured JSON errors (exit 1), no traceback.
+        for label, bad_cand in (
+            ("list-key", {**make_reference_candidate(), "key": ["x"], "category": "bogus"}),
+            ("int-key", {**make_reference_candidate(), "key": 1}),
+            ("surrogate-content", make_reference_candidate(content="# Sample\ud800\n")),
+        ):
+            with self.subTest(label=label):
+                out = self.extract("write", "--stdin", "--dry-run", "--json", code=1, stdin_text=json.dumps(envelope(bad_cand)))
+                self.assertNotIn("Traceback", out.stderr)
+                parsed = json.loads(out.stdout)
+                self.assertEqual(parsed["status"], "invalid")
+                self.assertTrue(parsed["errors"])
+                if label == "list-key":
+                    self.assertGreaterEqual(len(parsed["errors"]), 2)
+
+    def test_preflight_validation_collisions_toctou_and_capture_handoff(self):
+        # A3, C1: invalid reference (conflicting triggers) rejected at preflight without touching existing file.
+        (self.local / "references").mkdir(parents=True, exist_ok=True)
+        existing = self.local / "references/trigger.md"
+        existing.write_text("# Hand-authored\n\nKeep me.\n", encoding="utf-8")
+        bad_ref = make_reference_candidate(
+            key="trigger.md",
+            content="---\nuse-when: Alpha\n---\n# Reference\n\nUse when: Beta\n",
+        )
+        raw_bad = json.dumps(envelope(bad_ref))
+        dry = self.extract("write", "--stdin", "--dry-run", "--json", code=1, stdin_text=raw_bad)
+        self.assertIn("trigger", dry.stdout.lower())
+        self.extract(
+            "write", "--stdin", "--approve", bad_ref["id"], "--force", bad_ref["id"], "--json", code=1, stdin_text=raw_bad
+        )
+        self.assertEqual(existing.read_text(encoding="utf-8"), "# Hand-authored\n\nKeep me.\n")
+        existing.unlink()
+
+        # A3, C5: ancestor/descendant target collision rejected at preflight in preview and write.
+        c_parent = make_script_candidate(key="bundle", content="#!/bin/sh\necho bundle\n")
+        c_child = make_script_candidate(key="bundle/check.sh", content="#!/bin/sh\necho child\n")
+        col_raw = json.dumps(envelope(c_parent, c_child))
+        col_dry = self.extract("write", "--stdin", "--dry-run", "--json", code=1, stdin_text=col_raw)
+        self.assertIn("collision", col_dry.stdout.lower())
+        self.extract(
+            "write", "--stdin", "--approve", c_parent["id"], "--approve", c_child["id"], "--json", code=1, stdin_text=col_raw
+        )
+        self.assertFalse((self.local / "scripts/bundle").exists())
+
+        # C6: repo whose own path contains .byte-stack/playbooks validates capture writes cleanly.
+        nested_repo = self.temp / ".byte-stack/playbooks/nested-repo"
+        nested_repo.mkdir(parents=True)
+        self.run_command(["git", "init", "-q", nested_repo], self.temp)
+        mk = nested_repo / "Makefile"
+        mk.write_text("test:\n\tpython3 -m unittest\n", encoding="utf-8")
+        self.run_command(["git", "add", "Makefile"], nested_repo)
+        pb_nested = make_playbook_candidate(provenance=[{"path": "Makefile", "command": "python3 -m unittest", "line": 2}])
+        nested_out = json.loads(
+            self.extract(
+                "write", "--stdin", "--cwd", str(nested_repo), "--approve", pb_nested["id"], "--json",
+                stdin_text=json.dumps(envelope(pb_nested)),
+            ).stdout
+        )
+        self.assertTrue(nested_out["results"][0]["written"])
+        self.assertTrue(nested_out["results"][0]["validated"])
+
+        # C3 & C6: TOCTOU race on create, force-overwrite, and late conflict on capture write return per-ID conflict (exit 3).
+        race_helper = (
+            "import json, runpy, sys\n"
+            "from pathlib import Path\n"
+            "from unittest.mock import patch\n"
+            "cli, repo, mode = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]\n"
+            "m = runpy.run_path(str(cli))\n"
+            "g = m['cmd_write'].__globals__\n"
+            "if mode == 'ref-create':\n"
+            "    real = g['_plan_candidate']\n"
+            "    def hook(*a, **kw):\n"
+            "        res = real(*a, **kw)\n"
+            "        t = repo / '.byte-stack/references/race.md'\n"
+            "        t.parent.mkdir(parents=True, exist_ok=True)\n"
+            "        t.write_text('Human notes\\n', encoding='utf-8')\n"
+            "        return res\n"
+            "    with patch.dict(g, {'_plan_candidate': hook}):\n"
+            "        args = m['build_parser']().parse_args(sys.argv[4:])\n"
+            "        sys.exit(m['cmd_write'](args))\n"
+            "elif mode == 'ref-force':\n"
+            "    real = g['_plan_candidate']\n"
+            "    def hook(*a, **kw):\n"
+            "        res = real(*a, **kw)\n"
+            "        t = repo / '.byte-stack/references/race-force.md'\n"
+            "        t.write_text('# Concurrent human edit\\n', encoding='utf-8')\n"
+            "        return res\n"
+            "    with patch.dict(g, {'_plan_candidate': hook}):\n"
+            "        args = m['build_parser']().parse_args(sys.argv[4:])\n"
+            "        sys.exit(m['cmd_write'](args))\n"
+            "else:\n"
+            "    real = g['_run_capture_subprocess']\n"
+            "    def hook(exe, cargs, stdin_text=None):\n"
+            "        if cargs[0] == 'write' and '--dry-run' not in cargs:\n"
+            "            t = repo / '.byte-stack/workflows/race-wf.md'\n"
+            "            t.parent.mkdir(parents=True, exist_ok=True)\n"
+            "            t.write_text('# Human workflow\\n', encoding='utf-8')\n"
+            "        return real(exe, cargs, stdin_text=stdin_text)\n"
+            "    with patch.dict(g, {'_run_capture_subprocess': hook}):\n"
+            "        args = m['build_parser']().parse_args(sys.argv[4:])\n"
+            "        sys.exit(m['cmd_write'](args))\n"
+        )
+        race_ref = make_reference_candidate(key="race.md")
+        r1 = self.run_command(
+            [
+                sys.executable, "-I", "-c", race_helper, str(self.extract_script), str(self.repo), "ref-create",
+                "write", "--stdin", "--json", "--cwd", str(self.repo), "--approve", race_ref["id"],
+            ],
+            self.nested,
+            code=3,
+            stdin_text=json.dumps(envelope(race_ref)),
+        )
+        r1_data = json.loads(r1.stdout)
+        self.assertEqual(r1_data["results"][0]["status"], "conflict")
+        self.assertEqual((self.local / "references/race.md").read_text(encoding="utf-8"), "Human notes\n")
+
+        force_target = self.local / "references/race-force.md"
+        force_target.write_text("# Reviewed old notes\n", encoding="utf-8")
+        race_force = make_reference_candidate(key="race-force.md")
+        r1b = self.run_command(
+            [
+                sys.executable, "-I", "-c", race_helper, str(self.extract_script), str(self.repo), "ref-force",
+                "write", "--stdin", "--json", "--cwd", str(self.repo),
+                "--approve", race_force["id"], "--force", race_force["id"],
+            ],
+            self.nested,
+            code=3,
+            stdin_text=json.dumps(envelope(race_force)),
+        )
+        r1b_data = json.loads(r1b.stdout)
+        self.assertEqual(r1b_data["results"][0]["status"], "conflict")
+        self.assertEqual(force_target.read_text(encoding="utf-8"), "# Concurrent human edit\n")
+
+        race_wf = make_workflow_candidate(key="race-wf.md")
+        unrelated_ref = make_reference_candidate(key="unrelated-after-race.md", content="# Unrelated\n\nStill written.\n")
+        r2 = self.run_command(
+            [
+                sys.executable, "-I", "-c", race_helper, str(self.extract_script), str(self.repo), "cap-late",
+                "write", "--stdin", "--json", "--cwd", str(self.repo),
+                "--approve", race_wf["id"], "--approve", unrelated_ref["id"],
+            ],
+            self.nested,
+            code=3,
+            stdin_text=json.dumps(envelope(race_wf, unrelated_ref)),
+        )
+        r2_data = json.loads(r2.stdout)
+        by_id = {r["id"]: r for r in r2_data["results"]}
+        self.assertEqual(by_id[race_wf["id"]]["status"], "conflict")
+        self.assertFalse(by_id[race_wf["id"]]["written"])
+        self.assertEqual(by_id[unrelated_ref["id"]]["status"], "create")
+        self.assertTrue(by_id[unrelated_ref["id"]]["written"])
+        self.assertTrue((self.local / "references/unrelated-after-race.md").is_file())
 
 
 if __name__ == "__main__":
