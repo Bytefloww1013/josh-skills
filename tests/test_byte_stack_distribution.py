@@ -65,6 +65,10 @@ class DistributionTests(unittest.TestCase):
         self.assertFalse((self.project / ".byte-stack").exists())
         self.assertEqual(json.loads((cached / ".codex-plugin/plugin.json").read_text())["hooks"], [])
         self.assertTrue((cached / "skills/init/scripts/init.py").is_file())
+        self.assertTrue((cached / "skills/bmode/scripts/capture_playbook.py").is_file())
+        self.assertTrue((cached / "skills/capture-playbook/SKILL.md").is_file())
+        self.assertIn("ByteStackCapturePayload",
+                      self.command("python3", cached / "skills/bmode/scripts/capture_playbook.py", "schema"))
         self.assertIn("bundled\t", self.command("python3", cached / "skills/bmode/scripts/assets.py",
                                               "resolve", "playbooks", "investigation.md"))
 
@@ -74,7 +78,7 @@ class DistributionTests(unittest.TestCase):
         self.command("claude", "plugin", "marketplace", "add", str(ROOT))
         self.command("claude", "plugin", "install", "byte-stack@josh-skills")
         details = self.command("claude", "plugin", "details", "byte-stack@josh-skills")
-        for name in ("bmode", "init", "review-loop", "byte-agent", "PreCompact"):
+        for name in ("bmode", "init", "capture-playbook", "review-loop", "byte-agent", "PreCompact"):
             self.assertIn(name, details)
         self.assertFalse((self.project / ".byte-stack").exists())
 
