@@ -39,7 +39,7 @@ _BULLET_RE = re.compile(r"^(?:[-*+]|\d+\.)\s+")
 _WS_RE = re.compile(r"[ \t\r\n]*")
 
 LOCAL_PATH_PATTERNS = (
-    re.compile(r"(?<![\w.])/(?:home|Users)/[^\s/\\'\"`<>|;,)\]}]+(?:/[^\s'\"`<>|;,)\]}]*)?"),
+    re.compile(r"(?<![\w.])(?<!:/)/(?:[^\s/\\'\"`<>|;,)\]}]+/){0,4}(?:home|Users)/[^\s/\\'\"`<>|;,)\]}]+(?:/[^\s'\"`<>|;,)\]}]*)?"),
     re.compile(r"[A-Za-z]:\\Users\\[^\s/\\'\"`<>|;,)\]}]+(?:\\[^\s'\"`<>|;,)\]}]*)?"),
 )
 LINK_FALLBACK_ERRNOS = frozenset(
@@ -267,8 +267,10 @@ def _check_utf8(label, text, errors):
         return False
 
 
-def _check_safety_patterns(bmode_capture, label, text, errors):
-    if _has_local_path(text):
+def _check_safety_patterns(bmode_capture, label, text, errors, tracked_path=False):
+    """Apply capture's guards plus the absolute home-path rule; a tracked path is relative, so only the latter."""
+    capture_local = () if (bmode_capture is None or tracked_path) else bmode_capture.LOCAL_PATH_PATTERNS
+    if _has_local_path(text) or any(p.search(text) for p in capture_local):
         errors.append(f"{label} must not contain a machine-local home path")
     if bmode_capture is not None and any(p.search(text) for p in bmode_capture.SECRET_PATTERNS):
         errors.append(f"{label} appears to contain a secret or credential")
@@ -945,8 +947,10 @@ def validate_candidates_envelope(data, repo, tracked_map, bmode_assets, bmode_ca
             file_lines = text.splitlines()
             if _has_structured_extractor(rel_path):
                 sigs, _, _ = extract_signals(rel_path, text, for_provenance=True)
-                cmds = [(s["line"], s["text"]) for s in sigs if s["kind"] == "command"]
-                keys = [(s["line"], s["text"]) for s in sigs if s["kind"] == "key"] + [(s["line"], s["key"]) for s in sigs if "key" in s]
+                def forms(value):  # the full text, plus the shortened form the inventory prints for a long one
+                    return (value,) if len(value) <= MAX_SIGNAL_TEXT_LEN else (value, value[: MAX_SIGNAL_TEXT_LEN - 3] + "...")
+                cmds = [(s["line"], f) for s in sigs if s["kind"] == "command" for f in forms(s["text"])]
+                keys = [(s["line"], f) for s in sigs for f in (forms(s["text"]) if s["kind"] == "key" else ()) + ((s["key"],) if "key" in s else ())]
                 file_cache[rel_path] = (len(file_lines), True, cmds, keys)
             else:
                 file_cache[rel_path] = (len(file_lines), False, _logical_lines(file_lines), None)
@@ -1027,7 +1031,7 @@ def validate_candidates_envelope(data, repo, tracked_map, bmode_assets, bmode_ca
                         continue
                     if not _check_utf8(f"{pl}.path", ppath, errors):
                         continue
-                    _check_safety_patterns(bmode_capture, f"{pl}.path", ppath, errors)
+                    _check_safety_patterns(bmode_capture, f"{pl}.path", ppath, errors, tracked_path=True)
                     if ppath.startswith("/") or "\\" in ppath or ".." in ppath.split("/"):
                         errors.append(f"{pl}.path must be a repo-relative POSIX path")
                         continue

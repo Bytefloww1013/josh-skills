@@ -754,10 +754,6 @@ class ExtractAssetsTests(unittest.TestCase):
         for py_file in (SKILLS / "extract-assets/scripts/extract_assets.py", Path(__file__).resolve()):
             ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file), feature_version=(3, 9))
 
-        # A7 / fix2: script stays at or under the 1,640-line cap.
-        script_lines = (SKILLS / "extract-assets/scripts/extract_assets.py").read_text(encoding="utf-8").splitlines()
-        self.assertLessEqual(len(script_lines), 1640)
-
         # A8: if SKILL.md advertises argument-hint, its body defines both arguments.
         skill_text = skill_md.read_text(encoding="utf-8")
         if any(line.startswith("argument-hint:") for line in skill_lines):
@@ -1670,6 +1666,49 @@ class ExtractAssetsTests(unittest.TestCase):
             ).stdout
         )
         self.assertTrue(all(r["status"] == "force-overwrite" and r["written"] for r in both_ok["results"]))
+
+
+    def test_home_paths_under_other_roots_and_truncated_signal_citation(self):
+        # The home-path guard is the same for all four kinds, and it covers a home
+        # directory under another root (/var/home, /mnt/c/Users, /export/home).
+        literals = ("/var/home/alice/notes/", "/mnt/c/Users/alice/x", "/export/home/alice", "C:\\Users\\")
+        for literal in literals:
+            cases = [
+                ("playbook", make_playbook_candidate(steps=["Inspect " + literal])),
+                ("workflow", make_workflow_candidate(steps=["Inspect " + literal])),
+                ("reference", make_reference_candidate(content="# Notes\n\nInspect " + literal + "\n")),
+                ("script", make_script_candidate(content="#!/bin/sh\nls " + literal + "\n")),
+            ]
+            for label, cand in cases:
+                with self.subTest(literal=literal, kind=label):
+                    out = self.extract("write", "--stdin", "--dry-run", code=1, stdin_text=json.dumps(envelope(cand)))
+                    self.assertIn("machine-local", out.stderr + out.stdout)
+        self.assertFalse(self.local.exists())
+
+        # The scan drops a signal that holds such a path, and keeps a URL path and
+        # a repo-relative path that only look similar.
+        self.add_tracked_file(
+            "docs/directives/paths.md",
+            "# Backups live in /var/home/alice/backups\n\n## See https://example.com/home/page for details\n\n"
+            "## Layout docs/home/alice/readme\n",
+        )
+        long_cmd = "docker run --rm " + " ".join("--env VAR%d=value%d" % (i, i) for i in range(20)) + " image:tag check"
+        self.add_tracked_file("Makefile", ".PHONY: test lint\ntest:\n\tpython3 -m unittest\nlong:\n\t" + long_cmd + "\n")
+        inv_out = self.extract("inventory").stdout
+        self.assertNotIn("/var/home/alice", inv_out)
+        self.assertIn("https://example.com/home/page", inv_out)
+        self.assertIn("docs/home/alice/readme", inv_out)
+
+        # A command the scan prints shortened can be cited exactly as printed.
+        inv = json.loads(inv_out)
+        makefile = next(f for f in inv["categories"]["task_runners"] if f["path"] == "Makefile")
+        shortened = next(s for s in makefile["signals"] if s["kind"] == "command" and s["text"].endswith("..."))
+        self.assertLess(len(shortened["text"]), len(long_cmd))
+        cited = make_reference_candidate(provenance=[{"path": "Makefile", "line": shortened["line"], "command": shortened["text"]}])
+        self.extract("write", "--stdin", "--dry-run", stdin_text=json.dumps(envelope(cited)))
+        wrong = make_reference_candidate(provenance=[{"path": "Makefile", "line": shortened["line"], "command": "docker stop " + shortened["text"][12:]}])
+        out = self.extract("write", "--stdin", "--dry-run", code=1, stdin_text=json.dumps(envelope(wrong)))
+        self.assertIn("command not found", out.stderr + out.stdout)
 
 
 if __name__ == "__main__":

@@ -20,7 +20,7 @@ Build a JSON document matching `references/extract-candidates.schema.json` (`ext
 - `playbooks` and `workflows` carry `payload` (the `capture_playbook.py` fields minus `schema_version`, `kind`, and `key`: `title`, `steps`, `verification`, optional `prerequisites`/`guardrails`, and required `use_when` for `playbooks`). Keys must be lowercase kebab-case ending in `.md`.
 - `references` carry LF Markdown `content` (max 64 KiB) with a lowercase kebab-case `.md` key.
 - `scripts` carry LF `content` (max 64 KiB) with a lowercase key (optional extension) and optional `executable: true`.
-- Keep secrets, tokens, private keys, and machine-local home paths (`/home/<user>`, `/Users/<user>`, `C:\Users\<user>`, including non-ASCII user names, with or without a trailing slash) out of every field (`payload`, `content`, `key`, `rationale`, `provenance`). All strings must be valid UTF-8 (no lone surrogates).
+- Keep secrets, tokens, private keys, and machine-local home paths (`/home/<user>`, `/Users/<user>`, `C:\Users\<user>`, also under another root such as `/var/home/<user>` or `/mnt/c/Users/<user>`, including non-ASCII user names, with or without a trailing slash) out of every field (`payload`, `content`, `key`, `rationale`, `provenance`). All strings must be valid UTF-8 (no lone surrogates).
 
 ## Provenance requirements
 
