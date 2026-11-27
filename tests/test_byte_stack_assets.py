@@ -80,6 +80,32 @@ class AssetTests(unittest.TestCase):
         (d / key).write_text("")
         self.assertIn("empty asset", self.assets("resolve", "playbooks", key, code=2))
 
+    def test_frontmatter_triggers_and_malformed_frontmatter(self):
+        d = self.local / "playbooks"
+        d.mkdir(parents=True)
+        fm_path = d / "release-notes.md"
+        fm_path.write_text(
+            '---\nschema-version: 1\nuse-when: "Prepare release notes: tagged builds"\n---\n\n# Release notes\n\nCheck tags.\n',
+            encoding="utf-8",
+        )
+        self.assertEqual(self.assets("resolve", "playbooks", "release-notes.md").strip(), f"repo\t{fm_path}")
+        self.assertIn("release-notes.md\tPrepare release notes: tagged builds", self.assets("list-playbooks"))
+
+        fm_path.write_text("---\nuse-when: Unterminated\n# Body\n", encoding="utf-8")
+        self.assertIn("unterminated frontmatter", self.assets("resolve", "playbooks", "release-notes.md", code=2))
+
+        fm_path.write_text("---\nuse-when: No body\n---\n   \n", encoding="utf-8")
+        self.assertIn("empty asset", self.assets("resolve", "playbooks", "release-notes.md", code=2))
+
+        fm_path.write_text("---\nuse-when: One\nuse-when: Two\n---\n\n# Title\n", encoding="utf-8")
+        self.assertIn("duplicate frontmatter key", self.assets("resolve", "playbooks", "release-notes.md", code=2))
+
+        fm_path.write_text(
+            "---\nuse-when: Trigger from frontmatter\n---\n\nUse when: Trigger from body\n\n# Body\n",
+            encoding="utf-8",
+        )
+        self.assertIn("conflicting trigger", self.assets("resolve", "playbooks", "release-notes.md", code=2))
+
     def test_script_workflow_helper_and_unsafe_keys(self):
         self.run_command([sys.executable, INIT], self.nested)
         for kind, key in [("scripts", "check.py"), ("workflows", "release.md")]:
