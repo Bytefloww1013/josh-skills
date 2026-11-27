@@ -57,7 +57,6 @@ LOCAL_PATH_PATTERNS = (
     re.compile(r"/Users/[A-Za-z0-9._-]+/"),
     re.compile(r"[A-Za-z]:\\Users\\"),
 )
-WEB_URL_PATTERN = re.compile(r"\bhttps?://[^\s/'\"`<>]+[^\s'\"`<>]*")
 SECRET_PATTERNS = (
     re.compile(r"ghp_[A-Za-z0-9]{20,}"),
     re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
@@ -68,9 +67,8 @@ SECRET_PATTERNS = (
 
 
 def _check_safety_patterns(label, text, errors):
-    without_urls = WEB_URL_PATTERN.sub(" ", text)  # the path of a web URL with a host is not a path on this machine
     for pat in LOCAL_PATH_PATTERNS:
-        if pat.search(without_urls):
+        if pat.search(text):
             errors.append(f"{label} must not contain a machine-local home path")
             break
     for pat in SECRET_PATTERNS:

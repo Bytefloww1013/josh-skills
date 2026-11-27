@@ -154,7 +154,7 @@ def _build_sanitizer(repo=None, bmode_dir=None, bmode_capture=None, extra_paths=
             clean = raw.rstrip("/\\")
             if clean and clean not in seen:
                 seen.add(clean)
-                pat = re.compile(r"(?<![\w.-])" + re.escape(clean) + r"(?=$|[^\w.-]|\.(?=$|\s))")
+                pat = re.compile(r"(?<![\w.-])" + re.escape(clean) + r"(?![\w-]|\.\w)")  # a longer name is another path
                 root_pats.append((len(clean), pat, token))
     root_pats.sort(key=lambda item: item[0], reverse=True)
     return root_pats, (bmode_capture.SECRET_PATTERNS if bmode_capture is not None else ())
@@ -269,8 +269,7 @@ def _check_utf8(label, text, errors):
 def _check_safety_patterns(bmode_capture, label, text, errors, tracked_path=False):
     """Apply capture's guards plus the absolute home-path rule; a tracked path is relative, so only the latter."""
     capture_local = () if (bmode_capture is None or tracked_path) else bmode_capture.LOCAL_PATH_PATTERNS
-    without_urls = text if bmode_capture is None else bmode_capture.WEB_URL_PATTERN.sub(" ", text)
-    if _has_local_path(text) or any(p.search(without_urls) for p in capture_local):
+    if _has_local_path(text) or any(p.search(text) for p in capture_local):
         errors.append(f"{label} must not contain a machine-local home path")
     if bmode_capture is not None and any(p.search(text) for p in bmode_capture.SECRET_PATTERNS):
         errors.append(f"{label} appears to contain a secret or credential")
@@ -391,6 +390,34 @@ def _extract_script_summary(lines):
     return None
 
 
+def _markdown_lines(file_lines):
+    """Return [(1-based start_line, kind, stripped_text), ...]; kind is heading, command, fence or text.
+
+    A command is a line of a shell fence. It alone joins a backslash continuation, and only
+    inside its fence: a comment never continues, and the closing fence is never joined.
+    """
+    out, in_fence, fence_shell, idx = [], False, False, 0
+    while idx < len(file_lines):
+        idx += 1
+        stripped = file_lines[idx - 1].strip()
+        if stripped.startswith("```"):
+            lang = stripped[3:].strip().lower().split()[0] if (not in_fence and stripped[3:].strip()) else ""
+            in_fence, fence_shell = (not in_fence), (not in_fence and lang in ("sh", "bash", "shell", "zsh", "console", ""))
+            out.append((idx, "fence", stripped))
+        elif not in_fence and re.match(r"^#{1,4}\s+\S", stripped):
+            out.append((idx, "heading", stripped))
+        elif in_fence and fence_shell and stripped and not stripped.startswith("#"):
+            start_ln, parts = idx, [stripped]
+            while _continues(parts[-1]) and idx < len(file_lines) and not file_lines[idx].strip().startswith("```"):
+                parts[-1] = parts[-1][:-1]
+                parts.append(file_lines[idx].strip())
+                idx += 1
+            out.append((start_ln, "command", " ".join(parts)))
+        else:
+            out.append((idx, "text", stripped))
+    return out
+
+
 def _has_structured_extractor(rel_path):
     lower_name = Path(rel_path).name.lower()
     return Path(lower_name).suffix in (".json", ".jsonc", ".yml", ".yaml", ".mk", ".toml", ".ini", ".cfg") or lower_name in ("makefile", "gnumakefile", "justfile") or lower_name in INI_EXACT_NAMES
@@ -435,6 +462,12 @@ def _walk_json_keys(text):
     return out
 
 
+def _continues(line):
+    """True when the line ends in an unescaped backslash (an odd count of them)."""
+    body = line.rstrip()
+    return (len(body) - len(body.rstrip("\\"))) % 2 == 1
+
+
 def _logical_lines(file_lines):
     """Return [(1-based start_line, joined_text), ...] merging trailing backslash continuations."""
     out, idx = [], 0
@@ -443,7 +476,7 @@ def _logical_lines(file_lines):
         while idx < len(file_lines):
             line = file_lines[idx]
             idx += 1
-            if line.rstrip().endswith("\\") and idx < len(file_lines):
+            if _continues(line) and idx < len(file_lines):
                 parts.append(line.rstrip()[:-1])
                 continue
             parts.append(line)
@@ -486,17 +519,11 @@ def extract_signals(rel_path, text, sanitizer=None, bucket=None, for_provenance=
         return signals, truncated_signals, dropped_sensitive
 
     if suffix in (".md", ".mdx"):
-        in_fence, fence_shell, joined = False, False, dict(_logical_lines(lines))
-        for idx, line in enumerate(lines, 1):
-            stripped = line.strip()
-            if stripped.startswith("```"):
-                lang = stripped[3:].strip().lower().split()[0] if (not in_fence and stripped[3:].strip()) else ""
-                in_fence, fence_shell = (not in_fence), (not in_fence and lang in ("sh", "bash", "shell", "zsh", "console", ""))
-            elif not in_fence and re.match(r"^#{1,4}\s+\S", stripped):
-                add_signal("heading", idx, stripped)
-            elif in_fence and fence_shell and stripped and not stripped.startswith("#") and idx in joined:
-                cmd = joined[idx].strip()
-                add_signal("command", idx, cmd[2:].strip() if cmd.startswith("$ ") else cmd)
+        for start_ln, kind, line in _markdown_lines(lines):
+            if kind == "heading":
+                add_signal("heading", start_ln, line)
+            elif kind == "command":
+                add_signal("command", start_ln, line[2:].strip() if line.startswith("$ ") else line)
     elif suffix in (".json", ".jsonc"):
         entries = _walk_json_keys(text)
         if entries is not None:
@@ -953,6 +980,8 @@ def validate_candidates_envelope(data, repo, tracked_map, bmode_assets, bmode_ca
                 cmds = [(s["line"], f) for s in sigs if s["kind"] == "command" for f in forms(s["text"])]
                 keys = [(s["line"], f) for s in sigs for f in (forms(s["text"]) if s["kind"] == "key" else ()) + ((s["key"],) if "key" in s else ())]
                 file_cache[rel_path] = (len(file_lines), True, cmds, keys)
+            elif Path(rel_path).suffix.lower() in (".md", ".mdx"):  # the same joins the inventory prints
+                file_cache[rel_path] = (len(file_lines), False, [(ln, line) for ln, _, line in _markdown_lines(file_lines)], None)
             else:
                 file_cache[rel_path] = (len(file_lines), False, _logical_lines(file_lines), None)
         return file_cache[rel_path]
@@ -1565,11 +1594,8 @@ def cmd_schema():
 
 class _Parser(argparse.ArgumentParser):
     def error(self, message):
-        """Report a usage error through the output boundary, with every argument value taken out of the message."""
-        values = {part for arg in sys.argv[1:] if arg not in self._option_string_actions for part in (arg, arg.split("=", 1)[-1])}
-        for value in sorted((v for v in values if len(v) >= 4), key=len, reverse=True):
-            message = message.replace(value, "<value>")
-        _emit(f"{self.prog}: error: {message} (run with --help)", _build_sanitizer(), stream=sys.stderr)
+        """Report a usage error as fixed text; argparse's own message can repeat an argument value."""
+        _emit(f"{self.format_usage()}{self.prog}: error: invalid or missing arguments (run with --help)", _build_sanitizer(), stream=sys.stderr)
         raise SystemExit(2)
 
 

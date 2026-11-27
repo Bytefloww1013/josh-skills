@@ -1714,24 +1714,38 @@ class ExtractAssetsTests(unittest.TestCase):
     def test_argument_errors_quoted_root_deep_home_paths_and_web_urls(self):
         # A usage error does not echo a credential-shaped argument.
         token = "ghp_" + "A" * 24
-        for args in (("--max-bytes", token), ("--max=" + token,), ("--pretty=" + token,), (token,)):
-            with self.subTest(args=args[0].replace(token, "TOKEN")):
+        for args in (
+            ("--max-bytes", token), ("--max=" + token,), ("--pretty=" + token,), (token,),
+            ("--max-bytes", token + "\n"), ("--max-bytes", token + "\\suffix"), ("--max=" + token + "\n",), (token + "\n",),
+        ):
+            with self.subTest(args=[a.replace(token, "TOKEN") for a in args]):
                 out = self.extract("inventory", *args, code=2)
                 self.assertNotIn(token, out.stderr + out.stdout)
                 self.assertIn("error", out.stderr)
+                self.assertIn("--help", out.stderr)
 
-        # The repository root is redacted inside typographic quotes too, and a home
-        # directory is caught at any depth of an absolute path.
+        # A longer name that only starts with the repository root is another path and stays.
+        root = str(self.repo)
+        if "/home/" not in root and "/Users/" not in root:
+            self.add_tracked_file("docs/directives/places.md", "# Copies in " + root + ".bak and " + root + "-wt\n")
+            inv_out = self.extract("inventory").stdout
+            self.assertIn(root + ".bak and " + root + "-wt", inv_out)
+
+        # The repository root is redacted inside typographic quotes and before closing
+        # punctuation too, and a home directory is caught at any depth of an absolute path.
         deep = "/mnt/org/teams/region/hosts/userdata/home/sample"
         self.add_tracked_file(
             "docs/directives/places.md",
-            "# Checkout lives at “" + str(self.repo) + "” today\n\n## Shared files in " + deep + "\n\n"
-            "## Guide at https://example.test/home/docs/index\n",
+            "# Checkout lives at “" + root + "” today\n\n## Shared files in " + deep + "\n\n"
+            "## Guide at https://example.test/home/docs/index\n\n"
+            "## Also described (" + root + ".)\n\n## Quoted “" + root + ".”\n\n## Listed " + root + "., then more\n\n## Trailing " + root + "...\n",
         )
         inv_out = self.extract("inventory").stdout
-        self.assertNotIn(str(self.repo), inv_out)
+        self.assertNotIn(root, inv_out)
         self.assertNotIn(deep, inv_out)
         self.assertIn("https://example.test/home/docs/index", inv_out)
+        places = next(f for f in json.loads(inv_out)["categories"]["directives"] if f["path"] == "docs/directives/places.md")
+        self.assertEqual(places["signals_withheld"], 6)
         for label, cand in (
             ("reference", make_reference_candidate(content="# Notes\n\nShared files in " + deep + "\n")),
             ("script", make_script_candidate(content="#!/bin/sh\nls " + deep + "\n")),
@@ -1741,7 +1755,8 @@ class ExtractAssetsTests(unittest.TestCase):
                 out = self.extract("write", "--stdin", "--dry-run", code=1, stdin_text=json.dumps(envelope(cand)))
                 self.assertIn("machine-local", out.stderr + out.stdout)
 
-        # A web URL whose path has a home segment is ordinary documentation, for every kind.
+        # A home-like path is rejected on write even inside a web URL, for every kind,
+        # so a URL can never hide a local path that follows it.
         url = "https://example.test/home/docs/index/"
         for label, cand in (
             ("reference", make_reference_candidate(content="# Notes\n\nRead " + url + " first.\n")),
@@ -1750,7 +1765,16 @@ class ExtractAssetsTests(unittest.TestCase):
             ("workflow", make_workflow_candidate(steps=["Read " + url + " before pushing changes"])),
         ):
             with self.subTest(kind=label, text="web url"):
-                self.extract("write", "--stdin", "--dry-run", stdin_text=json.dumps(envelope(cand)))
+                out = self.extract("write", "--stdin", "--dry-run", code=1, stdin_text=json.dumps(envelope(cand)))
+                self.assertIn("machine-local", out.stderr + out.stdout)
+        piped = "curl https://example.test/health|/home/alice/bin/check/"
+        for label, cand in (
+            ("reference", make_reference_candidate(content="# Notes\n\n" + piped + "\n")),
+            ("playbook", make_playbook_candidate(steps=[piped, "Tag the verified release"])),
+        ):
+            with self.subTest(kind=label, text="path after a url"):
+                out = self.extract("write", "--stdin", "--approve", cand["id"], code=1, stdin_text=json.dumps(envelope(cand)))
+                self.assertIn("machine-local", out.stderr + out.stdout)
         self.assertFalse(self.local.exists())
 
         # A withheld signal is counted on its file, and that line can still be cited.
@@ -1771,7 +1795,11 @@ class ExtractAssetsTests(unittest.TestCase):
         self.assertIn("machine-local", out.stderr + out.stdout)
 
     def test_provenance_round_trip_for_continuations_dotted_scripts_just_and_toml_comments(self):
-        self.add_tracked_file("CONTRIBUTING.md", "# Contributing\n\n```sh\ngit status \\\n  --short\nmake test\n```\n")
+        self.add_tracked_file(
+            "CONTRIBUTING.md",
+            "# Contributing\n\n```sh\ngit status \\\n  --short\nmake test\n# Files on Windows end in \\\nmake lint\n"
+            "echo one\\\\\nmake docs\nmake build \\\n```\n\n## After the fence\n",
+        )
         self.add_tracked_file(
             "package.json",
             '{\n  "name": "fixture",\n  "scripts": {\n    "lint.fix": "eslint --fix .",\n    "test": "node --test"\n  }\n}\n',
@@ -1787,6 +1815,12 @@ class ExtractAssetsTests(unittest.TestCase):
         # One joined command for a fenced continuation, at its first line.
         self.assertIn({"kind": "command", "line": 4, "text": "git status --short"}, signals("CONTRIBUTING.md", "command"))
         self.assertNotIn("--short", [s["text"] for s in signals("CONTRIBUTING.md", "command")])
+        # A comment, an escaped backslash and the closing fence never join the next line.
+        self.assertEqual(
+            [(s["line"], s["text"]) for s in signals("CONTRIBUTING.md", "command")],
+            [(4, "git status --short"), (6, "make test"), (8, "make lint"), (9, "echo one\\\\"), (10, "make docs"), (11, "make build \\")],
+        )
+        self.assertIn({"kind": "heading", "line": 14, "text": "## After the fence"}, signals("CONTRIBUTING.md", "heading"))
         self.assertIn("scripts.lint.fix", [s.get("key") for s in signals("package.json", "command")])
         self.assertIn("cargo test --all", [s["text"] for s in signals("Justfile", "command")])
         self.assertIn("format.quote-style", [s["text"] for s in signals("ruff.toml", "key")])
@@ -1812,6 +1846,14 @@ class ExtractAssetsTests(unittest.TestCase):
         inv = json.loads(self.extract("inventory").stdout)
         package = next(f for f in inv["categories"]["task_runners"] if f["path"] == "package.json")
         self.assertNotIn("scripts", [s["text"] for s in package["signals"] if s["kind"] == "key"])
+
+    def test_candidate_payload_limits_match_the_capture_schema(self):
+        capture = json.loads((SKILLS / "bmode/references/capture-payload.schema.json").read_text(encoding="utf-8"))
+        candidates = json.loads((SKILLS / "extract-assets/references/extract-candidates.schema.json").read_text(encoding="utf-8"))
+        payload = candidates["properties"]["candidates"]["items"]["properties"]["payload"]
+        self.assertEqual(payload["properties"], {name: capture["properties"][name] for name in payload["properties"]})
+        self.assertEqual(set(payload["properties"]), set(capture["properties"]) - {"schema_version", "kind", "key"})
+        self.assertEqual(set(payload["required"]), set(capture["required"]) - {"schema_version", "kind", "key"})
 
     def test_catalog_head_only_entries_are_flagged_and_reference_triggers_deduplicate(self):
         # An asset larger than the 4 KiB head is listed, and marked as read in part.
