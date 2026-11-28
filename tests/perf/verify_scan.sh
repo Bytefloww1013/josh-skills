@@ -57,6 +57,7 @@ run_scan() {
 baseline_sha() { sha256sum "$1/byte-stack-perf/baseline.json" 2>/dev/null | cut -d' ' -f1; }
 
 # report XDG EXPR: evaluate a Python expression over the newest run's report.json (bound to r); prints the result.
+# In a run report, "regressed" and "raised" hold objects with a "category" key; "not_measured" holds names.
 report() {
   python3 - "$1/byte-stack-perf/runs" "$2" <<'EOF'
 import json, sys
@@ -93,8 +94,8 @@ done
 # V2 fault injection: the delayed tree flags exactly INIT.L, exits 1 and writes nothing.
 run_scan "$s1" run --src "$delayed"
 [ "$rc" -eq 1 ] && pass "V2 exits exactly 1" || fail "V2 exits exactly 1 (got $rc)"
-[ "$(report "$s1" 'sorted(r["regressed"])')" = "['INIT.L']" ] && pass "V2 regressed set is exactly {INIT.L}" \
-  || fail "V2 regressed set is exactly {INIT.L} (got $(report "$s1" 'sorted(r["regressed"])'))"
+[ "$(report "$s1" 'sorted(c["category"] for c in r["regressed"])')" = "['INIT.L']" ] && pass "V2 regressed set is exactly {INIT.L}" \
+  || fail "V2 regressed set is exactly {INIT.L} (got $(report "$s1" 'sorted(c["category"] for c in r["regressed"])'))"
 [ "$(baseline_sha "$s1")" = "$h0" ] && pass "V2 leaves the baseline byte-identical" || fail "V2 leaves the baseline byte-identical"
 no_temp_files "$s1" && pass "V2 leaves no temporary file" || fail "V2 leaves no temporary file"
 
@@ -131,7 +132,7 @@ done
 # V6 partial runs judge only what they measure (run before V5, against the V1 baseline).
 run_scan "$s1" run --only INIT --src "$delayed"
 [ "$rc" -eq 1 ] && pass "V6 --only INIT on the delayed tree exits 1" || fail "V6 --only INIT on the delayed tree exits 1 (got $rc)"
-[ "$(report "$s1" 'sorted(r["regressed"])')" = "['INIT.L']" ] && pass "V6 --only INIT flags exactly INIT.L" || fail "V6 --only INIT flags exactly INIT.L"
+[ "$(report "$s1" 'sorted(c["category"] for c in r["regressed"])')" = "['INIT.L']" ] && pass "V6 --only INIT flags exactly INIT.L" || fail "V6 --only INIT flags exactly INIT.L"
 run_scan "$s1" run --only ASSETS --src "$delayed"
 [ "$rc" -eq 0 ] && pass "V6 --only ASSETS on the delayed tree exits 0" || fail "V6 --only ASSETS on the delayed tree exits 0 (got $rc)"
 [ "$(report "$s1" 'all(c in r["not_measured"] for c in ("INIT.L","INIT.U","INIT.M","INIT.IO"))')" = "True" ] \
@@ -147,7 +148,7 @@ run_scan "$s5" init --src "$delayed"
 cp "$s5/byte-stack-perf/baseline.json" "$work/v5-before.json"
 run_scan "$s5" run --only INIT
 [ "$rc" -eq 0 ] && pass "V5 clean run exits 0" || fail "V5 clean run exits 0 (got $rc)"
-[ "$(report "$s5" '"INIT.L" in r["raised"]')" = "True" ] && pass "V5 reports INIT.L raised" || fail "V5 reports INIT.L raised"
+[ "$(report "$s5" 'any(c["category"] == "INIT.L" for c in r["raised"])')" = "True" ] && pass "V5 reports INIT.L raised" || fail "V5 reports INIT.L raised"
 verdict="$(python3 - "$work/v5-before.json" "$s5/byte-stack-perf/baseline.json" "$s5/byte-stack-perf/calibration.json" <<'EOF'
 import json, sys
 before, after, cal = (json.load(open(p)) for p in sys.argv[1:4])
