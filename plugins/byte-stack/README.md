@@ -90,4 +90,6 @@ Claude Code derives the version from Git. Antigravity and Codex use explicit man
 
 Run `python3 tests/test_byte_stack_distribution.py`, `python3 tests/test_byte_stack_assets.py`, `python3 tests/test_byte_stack_capture.py`, `python3 -I tests/test_byte_stack_extract.py`, `python3 plugins/byte-stack/hooks/check-handoff-guard.py`, and `python3 tests/test_antigravity_plugin_install.py` from the source checkout.
 
+To check that a change didn't slow anything down, run the performance scan: `python3 tests/perf/scan.py run`, or `run --only <group>` for one area. It exits 1 when a category regresses beyond its noise floor. Setup, the one-time calibration and the exit codes are in [tests/perf/README.md](../../tests/perf/README.md).
+
 For an opt-in end-to-end check, run `python3 tests/check_byte_stack_claude_live.py` with a signed-in Claude Code CLI. It uses four model turns, installs into a temporary profile, and verifies tool results for both playbook origins and two init runs.
