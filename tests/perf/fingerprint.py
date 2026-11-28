@@ -89,17 +89,28 @@ def _thread_siblings(cpu: int) -> set[int]:
         return {cpu}
 
 
+def _max_freq_khz(cpu: int) -> int:
+    path = Path(f"/sys/devices/system/cpu/cpu{cpu}/cpufreq/cpuinfo_max_freq")
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return 0
+    return int(text) if text.isdigit() else 0
+
+
 def pin_cpu(
     interrupts_text: str | None = None,
     allowed: set[int] | None = None,
     siblings: Callable[[int], set[int]] = _thread_siblings,
+    max_freq: Callable[[int], int] = _max_freq_khz,
 ) -> int:
     """Return the CPU the benchmarks are pinned to.
 
-    PERF_PIN_CPU overrides the choice. Otherwise pick the allowed CPU whose physical core
-    (the CPU and its SMT siblings) has handled the fewest device interrupts (the numbered
-    lines of /proc/interrupts); on a tie, the highest-numbered one, since CPU 0 usually
-    carries the most housekeeping work.
+    PERF_PIN_CPU overrides the choice. Otherwise, among the allowed CPUs of the fastest core
+    type (highest cpuinfo_max_freq, so performance cores on a hybrid CPU), pick the one whose
+    physical core (the CPU and its SMT siblings) has handled the fewest device interrupts
+    (the numbered lines of /proc/interrupts); on a tie, the highest-numbered one, since
+    CPU 0 usually carries the most housekeeping work.
     """
     if allowed is None:
         allowed = set(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else {0}
@@ -110,6 +121,9 @@ def pin_cpu(
         if not override.isdigit() or int(override) not in allowed:
             raise HarnessError("PERF_PIN_CPU is not an available CPU")
         return int(override)
+    freqs = {cpu: max_freq(cpu) for cpu in allowed}
+    fastest = max(freqs.values())
+    allowed = {cpu for cpu in allowed if freqs[cpu] == fastest}
     if interrupts_text is None:
         try:
             interrupts_text = Path("/proc/interrupts").read_text(encoding="utf-8", errors="replace")

@@ -585,8 +585,14 @@ class PinCpuTests(unittest.TestCase):
     def siblings(cpu: int) -> set:
         return {cpu % 4, cpu % 4 + 4}
 
-    def pick(self, allowed=frozenset(range(8))):
-        return fingerprint.pin_cpu(self.INTERRUPTS, set(allowed), siblings=self.siblings)
+    def pick(self, allowed=frozenset(range(8)), max_freq=lambda cpu: 4000000):
+        return fingerprint.pin_cpu(self.INTERRUPTS, set(allowed), siblings=self.siblings, max_freq=max_freq)
+
+    def test_prefers_the_fastest_core_type_on_a_hybrid_cpu(self):
+        os.environ.pop("PERF_PIN_CPU", None)
+        # Performance cores 0-3 (with the disk and GPU interrupts on 0 and 7's core), slower cores 4-7.
+        freq = lambda cpu: 5200000 if cpu < 4 else 2400000
+        self.assertEqual(self.pick(max_freq=freq), 2)
 
     def test_picks_the_core_without_device_interrupts(self):
         with mock.patch.dict(os.environ, {}, clear=False):

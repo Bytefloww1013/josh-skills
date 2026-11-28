@@ -20,7 +20,7 @@ The noise floor comes from p95 tails, and a short burst of other work on the hos
 
 The scan waits up to `load_wait_s` (180 s) for the 1-minute load average to fall to `max_loadavg_1m` (1.0), then exits 2. That gate catches standing load only, not short bursts.
 
-Every benchmark runs pinned to one CPU. The scan picks the CPU whose physical core has handled the fewest device interrupts, and on a tie the highest-numbered one. Set `PERF_PIN_CPU` to choose it yourself. The pinned CPU is part of the host fingerprint.
+Every benchmark runs pinned to one CPU. The scan picks from the fastest core type (the performance cores on a hybrid CPU) the CPU whose physical core has handled the fewest device interrupts, and on a tie the highest-numbered one. Set `PERF_PIN_CPU` to choose it yourself. The pinned CPU is part of the host fingerprint.
 
 If `calibrate` fails with `calibration noise fence too tight`, the host was not quiet enough: some identical scans differed by more than the noise floor. Its `report.json` lists the categories and scan pairs that failed. Quiet the host and calibrate again.
 
