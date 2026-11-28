@@ -12,7 +12,6 @@ import re
 import subprocess
 import sys
 import tarfile
-import traceback
 from typing import Any, Callable, Mapping, Sequence
 
 PERF_DIR = Path(__file__).resolve().parent
@@ -269,11 +268,23 @@ def _cat_label(cat: tuple[str, str]) -> str:
 
 
 def _emit_post_commit(text: str) -> None:
-    """Print a summary after a committed state write without altering the exit code."""
+    """Print a summary after the baseline commit point without changing the exit code.
+
+    On a failed write or flush, stdout's descriptor is pointed at /dev/null, so the
+    output still buffered there cannot fail again at interpreter shutdown (exit 120).
+    """
     try:
-        print(text)
+        sys.stdout.write(text + "\n")
+        sys.stdout.flush()
     except Exception:
-        pass
+        try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            try:
+                os.dup2(devnull, sys.stdout.fileno())
+            finally:
+                os.close(devnull)
+        except Exception:
+            pass
 
 
 def _format_run_summary(report: Mapping[str, Any]) -> str:
@@ -915,8 +926,6 @@ def main(
             return 2
     except Exception:
         print("error: internal error", file=sys.stderr)
-        if os.environ.get("PERF_DEBUG") == "1":
-            traceback.print_exc(file=sys.stderr)
         return 2
 
 

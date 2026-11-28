@@ -433,7 +433,7 @@ class PerfSamplerTests(unittest.TestCase):
         self.assertEqual(len(fields), 7)
         _, _, _, ru_rchar, _, ru_syscr, rc = fields
         self.assertEqual(rc, 0)
-        self.assertLessEqual(abs(ru_rchar - expected_rchar), 8)
+        self.assertEqual(ru_rchar, expected_rchar)
         self.assertEqual(ru_syscr, expected_syscr)
 
         # Static child that reads a known N-byte file reports rchar >= N (and delta >= N).

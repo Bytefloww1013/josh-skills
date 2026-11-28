@@ -210,6 +210,13 @@ class ScoringMathTests(unittest.TestCase):
         self.assertEqual(scoring.check_calibration_pairs(run_scores, eps_wide), [])
 
 
+class _BrokenStdout(io.StringIO):
+    """A stdout whose writes fail, like a closed pipe."""
+
+    def write(self, text):
+        raise BrokenPipeError("stdout closed")
+
+
 class ScanCliTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
@@ -235,8 +242,9 @@ class ScanCliTests(unittest.TestCase):
         toolchain=None,
         build_fixtures=None,
         loadavg=None,
+        out_buf=None,
     ) -> tuple[int, str, str]:
-        out_buf = io.StringIO()
+        out_buf = out_buf if out_buf is not None else io.StringIO()
         err_buf = io.StringIO()
         with redirect_stdout(out_buf), redirect_stderr(err_buf):
             code = scan.main(
@@ -849,11 +857,11 @@ class ScanCliTests(unittest.TestCase):
         self.assertEqual(baseline.baseline_path(self.state_dir).read_bytes(), before)
 
         # Post-commit print failure on run must keep exit 0 after baseline replace commits.
-        with mock.patch("builtins.print", side_effect=BrokenPipeError("stdout closed")):
-            code, _, _ = self._run_main(
-                ["run", "--only", "INIT.L", "--src", str(self.src_dir)],
-                measure=lambda s, g, r, **kw: _make_samples(g, group_scale={"INIT": 0.65}),
-            )
+        code, _, _ = self._run_main(
+            ["run", "--only", "INIT.L", "--src", str(self.src_dir)],
+            measure=lambda s, g, r, **kw: _make_samples(g, group_scale={"INIT": 0.65}),
+            out_buf=_BrokenStdout(),
+        )
         self.assertEqual(code, 0)
         after_print_fail = json.loads(baseline.baseline_path(self.state_dir).read_text(encoding="utf-8"))
         self.assertGreater(after_print_fail["categories"]["INIT"]["L"], base_before["categories"]["INIT"]["L"])
@@ -869,10 +877,8 @@ class ScanCliTests(unittest.TestCase):
         self.assertGreater(after_prune_fail["categories"]["ASSETS"]["L"], base_before["categories"]["ASSETS"]["L"])
 
         # Post-commit print and prune failures on init --reset must keep exit 0 after commit.
-        with mock.patch("builtins.print", side_effect=BrokenPipeError("stdout closed")), mock.patch.object(
-            baseline, "prune_run_dirs", side_effect=OSError("prune denied")
-        ):
-            code, _, _ = self._run_main(["init", "--reset", "--src", str(self.src_dir)])
+        with mock.patch.object(baseline, "prune_run_dirs", side_effect=OSError("prune denied")):
+            code, _, _ = self._run_main(["init", "--reset", "--src", str(self.src_dir)], out_buf=_BrokenStdout())
         self.assertEqual(code, 0)
         after_reset = json.loads(baseline.baseline_path(self.state_dir).read_text(encoding="utf-8"))
         self.assertAlmostEqual(
@@ -880,6 +886,24 @@ class ScanCliTests(unittest.TestCase):
             base_before["categories"]["INIT"]["L"],
             places=6,
         )
+
+    @unittest.skipUnless(Path("/dev/full").exists(), "needs /dev/full")
+    def test_post_commit_summary_survives_a_full_stdout_at_shutdown(self):
+        # print() into a buffered stdout succeeds and the flush fails later, at interpreter
+        # shutdown, which would exit 120 after the baseline was already replaced.
+        driver = (
+            "import sys; sys.path.insert(0, sys.argv[1]); import scan; "
+            "scan._emit_post_commit('summary ' * 64); sys.exit(0)"
+        )
+        with open("/dev/full", "wb") as full:
+            proc = subprocess.run(
+                [sys.executable, "-c", driver, str(PERF_DIR)],
+                stdout=full,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=30,
+            )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
 
     def test_malformed_state_files_and_last_resort_handler(self):
         before = self._calibrate_and_init()
@@ -909,7 +933,7 @@ class ScanCliTests(unittest.TestCase):
             with self.assertRaises(baseline.StateError):
                 baseline.load_baseline(bad_state)
 
-        # Last-resort handler in main(): fixed text without PERF_DEBUG, traceback only with PERF_DEBUG=1.
+        # Last-resort handler in main(): fixed text only, whatever PERF_DEBUG says.
         secret_marker = "unexpected-secret-token-/example/private-dir"
 
         def explode(src, groups, rdir, **kw):
@@ -927,7 +951,8 @@ class ScanCliTests(unittest.TestCase):
             code, out, err = self._run_main(["run", "--only", "INIT", "--src", str(self.src_dir)], measure=explode)
         self.assertEqual(code, 2)
         self.assertIn("internal error", err)
-        self.assertIn("Traceback", err)
+        self.assertNotIn(secret_marker, out + err)
+        self.assertNotIn("Traceback", out + err)
         self.assertEqual(baseline.baseline_path(self.state_dir).read_bytes(), before)
 
         # Real CLI subprocess against invalid UTF-8 baseline exits 2 with fixed text and no path leak.

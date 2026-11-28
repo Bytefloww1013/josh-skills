@@ -6,9 +6,10 @@
  * The measured child is forked from this small process, so ru_maxrss is not
  * inflated by a large parent process. On Linux the kernel adds a reaped
  * child's /proc/<pid>/io counters to its parent's /proc/self/io during wait4.
- * Two back-to-back snapshots before fork measure the cost of one snapshot read
- * (c = io0b - io0a), which is subtracted from io1 - io0b so the launcher's own
- * snapshot read is excluded from child I/O.
+ * The pre-fork snapshot's own read() calls land in io1 - io0, so read_proc_io
+ * reports what it read (bytes and calls, the EOF read included) and that exact
+ * cost is subtracted. The counter text changes length as the numbers grow, so a
+ * second snapshot cannot stand in for the first.
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -27,7 +28,13 @@ struct io_counters {
   unsigned long long syscr;
 };
 
-static int read_proc_io(struct io_counters *out) {
+/* Fills *out from /proc/self/io. *bytes and *calls receive what this function
+ * itself read, which the kernel adds to rchar and syscr after the values were
+ * formatted. */
+static int read_proc_io(struct io_counters *out, unsigned long long *bytes,
+                        unsigned long long *calls) {
+  *bytes = 0;
+  *calls = 0;
   int fd = open("/proc/self/io", O_RDONLY);
   if (fd < 0) {
     return -1;
@@ -36,6 +43,7 @@ static int read_proc_io(struct io_counters *out) {
   size_t total = 0;
   while (total + 1 < sizeof(buf)) {
     ssize_t n = read(fd, buf + total, sizeof(buf) - 1 - total);
+    *calls += 1;
     if (n < 0) {
       if (errno == EINTR) {
         continue;
@@ -49,6 +57,7 @@ static int read_proc_io(struct io_counters *out) {
     total += (size_t)n;
   }
   close(fd);
+  *bytes = (unsigned long long)total;
   buf[total] = '\0';
 
   int got_r = 0, got_w = 0, got_s = 0;
@@ -102,8 +111,9 @@ int main(int argc, char **argv) {
     return 125;
   }
 
-  struct io_counters io0a, io0b, io1;
-  if (read_proc_io(&io0a) != 0 || read_proc_io(&io0b) != 0) {
+  struct io_counters io0, io1;
+  unsigned long long snap_bytes = 0, snap_calls = 0, unused_bytes = 0, unused_calls = 0;
+  if (read_proc_io(&io0, &snap_bytes, &snap_calls) != 0) {
     close(errpipe[0]);
     close(errpipe[1]);
     return 124;
@@ -136,7 +146,7 @@ int main(int argc, char **argv) {
     return 125;
   }
 
-  if (read_proc_io(&io1) != 0) {
+  if (read_proc_io(&io1, &unused_bytes, &unused_calls) != 0) {
     close(errpipe[0]);
     return 124;
   }
@@ -160,12 +170,9 @@ int main(int argc, char **argv) {
   long long stime_us = (long long)ru.ru_stime.tv_sec * 1000000LL +
                        (long long)ru.ru_stime.tv_usec;
   long long maxrss_kb = (long long)ru.ru_maxrss;
-  unsigned long long c_rchar = sub_clamp(io0b.rchar, io0a.rchar);
-  unsigned long long c_wchar = sub_clamp(io0b.wchar, io0a.wchar);
-  unsigned long long c_syscr = sub_clamp(io0b.syscr, io0a.syscr);
-  unsigned long long d_rchar = sub_clamp(sub_clamp(io1.rchar, io0b.rchar), c_rchar);
-  unsigned long long d_wchar = sub_clamp(sub_clamp(io1.wchar, io0b.wchar), c_wchar);
-  unsigned long long d_syscr = sub_clamp(sub_clamp(io1.syscr, io0b.syscr), c_syscr);
+  unsigned long long d_rchar = sub_clamp(sub_clamp(io1.rchar, io0.rchar), snap_bytes);
+  unsigned long long d_wchar = sub_clamp(io1.wchar, io0.wchar);
+  unsigned long long d_syscr = sub_clamp(sub_clamp(io1.syscr, io0.syscr), snap_calls);
   int exit_code = WIFEXITED(st) ? WEXITSTATUS(st) : 128 + WTERMSIG(st);
 
   char line[256];
