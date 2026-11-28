@@ -569,5 +569,52 @@ class PerfSamplerTests(unittest.TestCase):
             self.assertNotIn("/secret/host/path", str(ctx_hf.exception))
 
 
+class PinCpuTests(unittest.TestCase):
+    """The benchmark pin avoids the physical cores that take device interrupts."""
+
+    # CPU 0 takes the disk, CPU 1 the network card, CPU 7 the GPU; cores are (0,4) (1,5) (2,6) (3,7).
+    INTERRUPTS = (
+        "            CPU0       CPU1       CPU2       CPU3       CPU4       CPU5       CPU6       CPU7\n"
+        "  132:   1985304          0          0          0          0          0          0          0  IR-PCI-MSI ahci\n"
+        "  135:         0          0          0          0          0          0          0    1233063  IR-PCI-MSI i915\n"
+        "  137:         0   10106960          0          0          0          0          0          0  IR-PCI-MSI rtw88\n"
+        "  LOC:  23146867   20946095   16073504   15838558   15534426   15408894   15509393   15888217  Local timer\n"
+    )
+
+    @staticmethod
+    def siblings(cpu: int) -> set:
+        return {cpu % 4, cpu % 4 + 4}
+
+    def pick(self, allowed=frozenset(range(8))):
+        return fingerprint.pin_cpu(self.INTERRUPTS, set(allowed), siblings=self.siblings)
+
+    def test_picks_the_core_without_device_interrupts(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PERF_PIN_CPU", None)
+            # CPU 4 has no interrupts of its own but shares a core with CPU 0; (2, 6) is clean.
+            self.assertEqual(self.pick(), 6)
+            self.assertEqual(self.pick({0, 1, 2, 4}), 2)
+            # Timer lines (LOC) do not count; with no clean core the least-loaded one wins.
+            self.assertEqual(self.pick({0, 3}), 3)
+
+    def test_override_must_name_an_available_cpu(self):
+        with mock.patch.dict(os.environ, {"PERF_PIN_CPU": "1"}):
+            self.assertEqual(self.pick(), 1)
+        for bad in ("9", "x", "-1"):
+            with mock.patch.dict(os.environ, {"PERF_PIN_CPU": bad}):
+                with self.assertRaises(benchmarks.HarnessError):
+                    self.pick()
+
+    def test_pin_cpu_is_part_of_the_host_fingerprint(self):
+        if shutil.which("hyperfine") is None:
+            self.skipTest("hyperfine unavailable")
+        os.environ.pop("PERF_FINGERPRINT_OVERRIDE", None)
+        with mock.patch.object(fingerprint, "pin_cpu", return_value=2):
+            a = fingerprint.fingerprint()
+        with mock.patch.object(fingerprint, "pin_cpu", return_value=6):
+            b = fingerprint.fingerprint()
+        self.assertNotEqual(a, b)
+
+
 if __name__ == "__main__":
     unittest.main()

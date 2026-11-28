@@ -8,7 +8,7 @@
 # ~/.local/state/byte-stack-perf/calibration.json) into each throwaway state folder. Run `scan.py calibrate` first if
 # you have none.
 #
-# It runs about 7 full scans (about 1h30) on an otherwise idle host. Prints one PASS/FAIL line per check and exits 0
+# It runs about 7 full scans (about 1h30) on a quiet host (see "A quiet host" in tests/perf/README.md). Prints one PASS/FAIL line per check and exits 0
 # only if every check passes, 1 if any fails, 2 on a usage error.
 set -u
 

@@ -10,7 +10,19 @@ The scan times every byte-stack entrypoint on fixed fixtures. It scores each com
 - `hyperfine` 1.19.0 on `PATH`. Install the release binary `hyperfine-v1.19.0-x86_64-unknown-linux-musl.tar.gz` from the sharkdp/hyperfine GitHub releases (SHA-256 `825287143f397774093539ca2458854ab3735c0e8a1aaf075c22edce7d261556`), or run `cargo install hyperfine --version 1.19.0 --locked`.
 - `uvx`, only for the schema check in `verify_scan.sh`.
 
-Run scans on an idle host. The scan waits up to `load_wait_s` (180 s) for the 1-minute load average to fall to `max_loadavg_1m` (1.0), then exits 2.
+### A quiet host
+
+The noise floor comes from p95 tails, and a short burst of other work on the host moves a p95 by 10% or more. Calibrate, `init`, `run` and `verify_scan.sh` on a quiet host:
+
+- Use the machine for nothing else while a scan runs, including an agent session in the same checkout.
+- Stop background services and timers that wake up during a scan: sync and tunnel daemons, update checkers, periodic collectors such as `sysstat`, and tools that poll the network.
+- Use the same power and cooling state each time. A laptop on battery, or a hot one, runs at a lower clock.
+
+The scan waits up to `load_wait_s` (180 s) for the 1-minute load average to fall to `max_loadavg_1m` (1.0), then exits 2. That gate catches standing load only, not short bursts.
+
+Every benchmark runs pinned to one CPU. The scan picks the CPU whose physical core has handled the fewest device interrupts, and on a tie the highest-numbered one. Set `PERF_PIN_CPU` to choose it yourself. The pinned CPU is part of the host fingerprint.
+
+If `calibrate` fails with `calibration noise fence too tight`, the host was not quiet enough: some identical scans differed by more than the noise floor. Its `report.json` lists the categories and scan pairs that failed. Quiet the host and calibrate again.
 
 ## Commands
 
@@ -58,7 +70,7 @@ All state is local to this host, in `$XDG_STATE_HOME/byte-stack-perf/` (default 
 - `.lock`: exclusive non-blocking lock held while a scan runs; a concurrent scan in the same state folder exits 2.
 - `runs/<utc>/`: the newest 3 runs' raw samples and `report.json`.
 
-The host fingerprint is a SHA-256 of the CPU model, core count, CPU governor, kernel major version and the Python and hyperfine versions. If any of them changes, the scan exits 2 until you run `calibrate` and `init` again.
+The host fingerprint is a SHA-256 of the CPU model, core count, CPU governor, kernel major version, the Python and hyperfine versions, and the pinned CPU. If any of them changes, the scan exits 2 until you run `calibrate` and `init` again.
 
 The scan never reads or writes `~/.claude`. Each hook benchmark gets a throwaway `HOME` and a synthetic transcript.
 

@@ -17,13 +17,14 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from benchmarks import BenchmarkSpec, GROUPS, HarnessError, SAMPLE_COUNTS, build_specs
+import fingerprint
 import fixtures
 
 _RU_SOURCE = HERE / "ru.c"
 _EXPECTED_PATH = HERE / "expected.json"
 _CANARY_RUNS = 30
 _CANARY_WARMUP = 3
-_PIN_CPU = 0
+_PIN_CPU: int | None = None  # None: fingerprint.pin_cpu() chooses
 
 
 def build_ru(out_dir: Path) -> Path:
@@ -74,10 +75,11 @@ def _taskset_prefix() -> list[str]:
     ts = shutil.which("taskset")
     if not ts:
         return []
+    cpu = fingerprint.pin_cpu() if _PIN_CPU is None else _PIN_CPU
     try:
-        probe = subprocess.run([ts, "-c", str(_PIN_CPU), "true"], capture_output=True, timeout=5)
+        probe = subprocess.run([ts, "-c", str(cpu), "true"], capture_output=True, timeout=5)
         if probe.returncode == 0:
-            return [ts, "-c", str(_PIN_CPU)]
+            return [ts, "-c", str(cpu)]
     except (OSError, subprocess.SubprocessError):
         pass
     return []
