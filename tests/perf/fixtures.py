@@ -14,12 +14,13 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from typing import Sequence
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from benchmarks import BenchmarkSpec, HarnessError, build_specs
+from benchmarks import BenchmarkSpec, GROUPS, HarnessError, build_specs
 
 EXPECTED_PATH = HERE / "expected.json"
 
@@ -36,6 +37,26 @@ _GIT_ENV_FIXED = {
     "GIT_COMMITTER_DATE": "2026-01-01T00:00:00Z",
     "LC_ALL": "C",
 }
+_CAPTURED_PLAYBOOK_TEXT = (
+    "---\n"
+    "schema-version: 1\n"
+    "kind: playbooks\n"
+    "key: perf-fixture.md\n"
+    "use-when: Run deterministic verification steps for the fixture repository.\n"
+    "managed-by: byte-stack/capture\n"
+    "content-sha256: 4b02b27e465223616cd4a8b5c51e78e2628bf606edd93d613c04d12c01a56189\n"
+    "---\n\n"
+    "# Performance fixture playbook\n\n"
+    "## Prerequisites\n\n"
+    "- Clean git working tree\n\n"
+    "## Steps\n\n"
+    "1. Run python3 -m unittest across the test suite\n"
+    "2. Confirm exit status is zero before committing\n\n"
+    "## Verification\n\n"
+    "- All fixture unit tests exit 0\n\n"
+    "## Guardrails\n\n"
+    "- Do not modify bundled plugin files\n"
+)
 
 
 def _write_text(path: Path, text: str) -> None:
@@ -429,7 +450,7 @@ def build(root: Path) -> str:
     )
     _write_text(root / "briefs" / "reviewer-report.md", reviewer_report)
 
-    # 7. Capture fixture payload (materialize() runs capture_playbook.py write to produce the validated file).
+    # 7. Capture fixture payload and deterministic captured playbook owned by the harness.
     capture_payload = {
         "schema_version": 1,
         "kind": "playbooks",
@@ -447,6 +468,10 @@ def build(root: Path) -> str:
     _write_text(
         root / "capture" / "payload.json",
         json.dumps(capture_payload, indent=2, sort_keys=True) + "\n",
+    )
+    _write_text(
+        root / "capture-repo" / ".byte-stack" / "playbooks" / "perf-fixture.md",
+        _CAPTURED_PLAYBOOK_TEXT,
     )
 
     # 8. Extract fixture: 300-file repo + valid candidates.json.
@@ -515,24 +540,30 @@ def build(root: Path) -> str:
 
 def _git_init_repo(repo: Path, git_home: Path, *, stage_all: bool = False) -> None:
     env = {**os.environ, "HOME": str(git_home), **_GIT_ENV_FIXED}
-    repo.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(
-        ["git", "init", "-q", str(repo)],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if proc.returncode != 0:
-        raise HarnessError("failed to initialize fixture git repository")
-    if stage_all:
+    try:
+        repo.mkdir(parents=True, exist_ok=True)
         proc = subprocess.run(
-            ["git", "-C", str(repo), "add", "-A"],
+            ["git", "init", "-q", str(repo)],
             env=env,
             capture_output=True,
             text=True,
             timeout=30,
         )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise HarnessError("failed to initialize fixture git repository") from exc
+    if proc.returncode != 0:
+        raise HarnessError("failed to initialize fixture git repository")
+    if stage_all:
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(repo), "add", "-A"],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise HarnessError("failed to stage fixture git repository") from exc
         if proc.returncode != 0:
             raise HarnessError("failed to stage fixture git repository")
 
@@ -544,60 +575,74 @@ def _expand_templates(src_dir: Path, dst_dir: Path, work_str: str) -> None:
         (dst_dir / src_file.name).write_text(text, encoding="utf-8")
 
 
-def materialize(fx_root: Path, work_dir: Path, src: Path) -> None:
-    """Create runnable git repos, expanded event/state JSONs, and captured playbook under work_dir."""
+def materialize(
+    fx_root: Path,
+    work_dir: Path,
+    selected_groups: Sequence[str] | None = None,
+) -> None:
+    """Create runnable git repos and expanded templates under work_dir for selected_groups."""
+    groups = tuple(GROUPS if selected_groups is None else selected_groups)
+    if not groups:
+        raise HarnessError("no benchmark groups selected")
+    for group in groups:
+        if group not in GROUPS:
+            raise HarnessError("unknown benchmark group")
+    wanted = set(groups)
+
     fx_root = Path(fx_root).resolve()
     work_dir = Path(work_dir).resolve()
-    src = Path(src).resolve()
     if not fx_root.is_dir():
         raise HarnessError("fixture root does not exist")
-    if work_dir.exists():
-        shutil.rmtree(work_dir)
-    shutil.copytree(fx_root, work_dir)
 
     git_home = work_dir / "git-home"
-    git_home.mkdir(parents=True, exist_ok=True)
-    (work_dir / "hook-home" / ".claude" / "handoff-state").mkdir(parents=True, exist_ok=True)
-    (work_dir / "out").mkdir(parents=True, exist_ok=True)
-    (work_dir / "tmp").mkdir(parents=True, exist_ok=True)
-
-    _git_init_repo(work_dir / "proj", git_home)
-    _git_init_repo(work_dir / "proj-override", git_home)
-    _git_init_repo(work_dir / "extract-repo", git_home, stage_all=True)
-    _git_init_repo(work_dir / "capture-repo", git_home)
-    _git_init_repo(work_dir / "init-repo", git_home)
-
-    # Generate the capture validate fixture via capture_playbook.py write (required: bundled playbooks fail validate).
-    capture_py = src / "skills" / "bmode" / "scripts" / "capture_playbook.py"
-    if not capture_py.is_file():
-        raise HarnessError("capture_playbook.py is missing in target source")
-    proc = subprocess.run(
-        [
-            sys.executable,
-            str(capture_py),
-            "write",
-            "--payload",
-            str(work_dir / "capture" / "payload.json"),
-            "--cwd",
-            str(work_dir / "capture-repo"),
-        ],
-        cwd=str(work_dir / "capture-repo"),
-        env={**os.environ, "HOME": str(git_home), "LC_ALL": "C"},
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if proc.returncode != 0:
-        raise HarnessError("failed to generate capture validate fixture")
-
     work_str = str(work_dir)
-    _expand_templates(work_dir / "events", work_dir / "runtime" / "events", work_str)
-    _expand_templates(work_dir / "states", work_dir / "runtime" / "states", work_str)
-    values_text = (work_dir / "briefs" / "reviewer-values.json").read_text(encoding="utf-8")
-    (work_dir / "runtime" / "reviewer-values.json").write_text(
-        values_text.replace("$FX", work_str),
-        encoding="utf-8",
-    )
+    try:
+        if work_dir.exists():
+            shutil.rmtree(work_dir)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        git_home.mkdir(parents=True, exist_ok=True)
+        (work_dir / "tmp").mkdir(parents=True, exist_ok=True)
+
+        if wanted & {"HOOK_HOT", "HOOK_LIFECYCLE", "ASSETS", "BRIEFS", "CAPTURE", "SUITE"}:
+            shutil.copytree(fx_root / "proj", work_dir / "proj")
+            _git_init_repo(work_dir / "proj", git_home)
+
+        if wanted & {"HOOK_HOT", "HOOK_LIFECYCLE"}:
+            shutil.copytree(fx_root / "transcripts", work_dir / "transcripts")
+            (work_dir / "hook-home" / ".claude" / "handoff-state").mkdir(parents=True, exist_ok=True)
+            _expand_templates(fx_root / "events", work_dir / "runtime" / "events", work_str)
+            _expand_templates(fx_root / "states", work_dir / "runtime" / "states", work_str)
+
+        if "ASSETS" in wanted:
+            shutil.copytree(fx_root / "proj-override", work_dir / "proj-override")
+            _git_init_repo(work_dir / "proj-override", git_home)
+
+        if "BRIEFS" in wanted:
+            shutil.copytree(fx_root / "briefs", work_dir / "briefs")
+            (work_dir / "out").mkdir(parents=True, exist_ok=True)
+            (work_dir / "runtime").mkdir(parents=True, exist_ok=True)
+            values_text = (fx_root / "briefs" / "reviewer-values.json").read_text(encoding="utf-8")
+            (work_dir / "runtime" / "reviewer-values.json").write_text(
+                values_text.replace("$FX", work_str),
+                encoding="utf-8",
+            )
+
+        if "CAPTURE" in wanted:
+            shutil.copytree(fx_root / "capture", work_dir / "capture")
+            shutil.copytree(fx_root / "capture-repo", work_dir / "capture-repo")
+            _git_init_repo(work_dir / "capture-repo", git_home)
+
+        if "EXTRACT" in wanted:
+            shutil.copytree(fx_root / "extract", work_dir / "extract")
+            shutil.copytree(fx_root / "extract-repo", work_dir / "extract-repo")
+            _git_init_repo(work_dir / "extract-repo", git_home, stage_all=True)
+
+        if "INIT" in wanted:
+            _git_init_repo(work_dir / "init-repo", git_home)
+    except HarnessError:
+        raise
+    except (OSError, UnicodeDecodeError) as exc:
+        raise HarnessError("failed to materialize fixtures") from exc
 
 
 def normalize_output(stdout: str, fx_root: Path, src: Path | None = None) -> str:
@@ -628,25 +673,38 @@ def digest_output(stdout: str, fx_root: Path, src: Path | None = None) -> str:
 def run_spec_once(spec: BenchmarkSpec, work_dir: Path, src: Path) -> tuple[int, str]:
     """Run one benchmark untimed (including its prepare step) and return (exit_code, stdout_sha256)."""
     if spec.prepare_argv:
-        prep = subprocess.run(
-            list(spec.prepare_argv),
-            cwd=str(spec.cwd),
-            env=dict(spec.env),
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+        try:
+            prep = subprocess.run(
+                list(spec.prepare_argv),
+                cwd=str(spec.cwd),
+                env=dict(spec.env),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise HarnessError("benchmark prepare command timed out") from exc
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise HarnessError("benchmark prepare command failed") from exc
         if prep.returncode != 0:
             raise HarnessError("benchmark prepare command failed")
-    stdin_bytes = spec.stdin_file.read_bytes() if spec.stdin_file else b""
-    proc = subprocess.run(
-        list(spec.argv),
-        cwd=str(spec.cwd),
-        env=dict(spec.env),
-        input=stdin_bytes,
-        capture_output=True,
-        timeout=120,
-    )
+    try:
+        stdin_bytes = spec.stdin_file.read_bytes() if spec.stdin_file else b""
+    except OSError as exc:
+        raise HarnessError("benchmark stdin file is unreadable") from exc
+    try:
+        proc = subprocess.run(
+            list(spec.argv),
+            cwd=str(spec.cwd),
+            env=dict(spec.env),
+            input=stdin_bytes,
+            capture_output=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HarnessError("benchmark command timed out") from exc
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise HarnessError("benchmark command failed") from exc
     stdout = proc.stdout.decode("utf-8", errors="replace")
     return proc.returncode, digest_output(stdout, work_dir, src)
 
@@ -654,16 +712,22 @@ def run_spec_once(spec: BenchmarkSpec, work_dir: Path, src: Path) -> tuple[int, 
 def unpack_head_archive(dest: Path) -> Path:
     """Unpack `git archive HEAD plugins/byte-stack` into dest and return the plugin directory."""
     repo_root = HERE.parents[1]
-    proc = subprocess.run(
-        ["git", "-C", str(repo_root), "archive", "HEAD", "plugins/byte-stack"],
-        capture_output=True,
-        timeout=30,
-    )
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_root), "archive", "HEAD", "plugins/byte-stack"],
+            capture_output=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise HarnessError("failed to archive HEAD plugins/byte-stack") from exc
     if proc.returncode != 0:
         raise HarnessError("failed to archive HEAD plugins/byte-stack")
-    dest.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(fileobj=io.BytesIO(proc.stdout), mode="r:") as tf:
-        tf.extractall(dest, filter="data") if sys.version_info >= (3, 12) else tf.extractall(dest)
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(fileobj=io.BytesIO(proc.stdout), mode="r:") as tf:
+            tf.extractall(dest, filter="data") if sys.version_info >= (3, 12) else tf.extractall(dest)
+    except (OSError, tarfile.TarError) as exc:
+        raise HarnessError("failed to extract archived plugin tree") from exc
     plugin_dir = dest / "plugins" / "byte-stack"
     if not plugin_dir.is_dir():
         raise HarnessError("archived plugin tree is missing")
@@ -677,7 +741,7 @@ def generate_expected(src: Path) -> dict[str, dict[str, object]]:
         fx_dir = tmp_path / "fx"
         work_dir = tmp_path / "work"
         build(fx_dir)
-        materialize(fx_dir, work_dir, src)
+        materialize(fx_dir, work_dir)
         specs = build_specs(src, work_dir)
         out: dict[str, dict[str, object]] = {}
         for spec in specs:
@@ -732,6 +796,8 @@ def main(argv: list[str] | None = None) -> int:
         if not args.expected.is_file():
             raise HarnessError("expected digest table is missing or invalid")
         expected = json.loads(args.expected.read_text(encoding="utf-8"))
+        if not isinstance(expected, dict):
+            raise HarnessError("expected digest table is missing or invalid")
         mismatches = [
             name for name, exp in expected.items() if actual.get(name) != exp
         ] + [name for name in actual if name not in expected]

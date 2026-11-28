@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 import shlex
@@ -85,20 +86,18 @@ def _taskset_prefix() -> list[str]:
 def _parse_ru_lines(ru_out: Path, expected_total: int) -> list[tuple[int, int, int, int, int, int, int]]:
     try:
         lines = [line for line in ru_out.read_text(encoding="utf-8").splitlines() if line.strip()]
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise HarnessError("ru output file is unreadable") from exc
+    if any(line.strip() == "EXEC_FAIL" for line in lines):
+        raise HarnessError("benchmark command could not start")
     if len(lines) != expected_total:
         raise HarnessError("ru output line count mismatch")
     parsed: list[tuple[int, int, int, int, int, int, int]] = []
     for line in lines:
         parts = line.split()
-        if len(parts) != 7:
+        if len(parts) != 7 or not all(p.isascii() and p.isdigit() for p in parts):
             raise HarnessError("malformed ru output line")
-        try:
-            vals = tuple(int(p) for p in parts)
-        except ValueError as exc:
-            raise HarnessError("malformed ru output line") from exc
-        parsed.append(vals)  # type: ignore[arg-type]
+        parsed.append(tuple(int(p) for p in parts))  # type: ignore[arg-type]
     return parsed
 
 
@@ -116,10 +115,15 @@ def _run_hyperfine_round(
     ru_out: Path,
     stdin_file: Path | None = None,
     prepare_cmd: str | None = None,
-) -> tuple[list[float], list[tuple[int, int, int, int, int, int, int]]]:
+) -> tuple[list[float], list[tuple[int, int, int, int, int, int, int]], list[int]]:
     _require_ru_executable(ru)
-    json_out.parent.mkdir(parents=True, exist_ok=True)
-    ru_out.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        json_out.parent.mkdir(parents=True, exist_ok=True)
+        ru_out.parent.mkdir(parents=True, exist_ok=True)
+        ru_out.write_bytes(b"")
+        os.chmod(ru_out, 0o600)
+    except OSError as exc:
+        raise HarnessError("failed to prepare sampling output files") from exc
 
     cmd_str = shlex.join([str(ru), *argv])
     hf_cmd: list[str] = [
@@ -142,8 +146,6 @@ def _run_hyperfine_round(
 
     # `sh` opens the ru output on fd 3 (append) and then execs hyperfine, so every measured command inherits it. This avoids a
     # preexec_fn dup2, which Python 3.9 undoes when it closes fds not listed in pass_fds.
-    ru_out.write_bytes(b"")
-    os.chmod(ru_out, 0o600)
     try:
         proc = subprocess.run(
             ["sh", "-c", 'exec "$@" 3>>"$PERF_RU_OUT"', "sh", *hf_cmd],
@@ -151,6 +153,7 @@ def _run_hyperfine_round(
             env={**dict(env), "PERF_RU_OUT": str(ru_out)},
             capture_output=True,
             text=True,
+            timeout=600,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise HarnessError("hyperfine invocation failed") from exc
@@ -167,13 +170,22 @@ def _run_hyperfine_round(
     if not isinstance(times_s, list) or len(times_s) != runs:
         raise HarnessError("hyperfine sample count mismatch")
 
+    wall_ms: list[float] = []
+    for sample in times_s:
+        if isinstance(sample, bool) or not isinstance(sample, (int, float)):
+            raise HarnessError("hyperfine sample value is not numeric")
+        val = float(sample)
+        if not math.isfinite(val) or val < 0.0:
+            raise HarnessError("hyperfine sample value is not numeric")
+        wall_ms.append(val * 1000.0)
+
     ru_rows = _parse_ru_lines(ru_out, warmup + runs)
     measured_rows = ru_rows[warmup:]
-    if len(measured_rows) != len(times_s):
+    if len(measured_rows) != len(wall_ms):
         raise HarnessError("ru output line count mismatch")
 
-    wall_ms = [float(t) * 1000.0 for t in times_s]
-    return wall_ms, measured_rows
+    all_exits = [row[-1] for row in ru_rows]
+    return wall_ms, measured_rows, all_exits
 
 
 def _load_expected() -> dict[str, dict[str, object]]:
@@ -195,7 +207,7 @@ def _check_digests(
     ok: dict[str, bool] = {}
     for spec in specs:
         exp = expected.get(spec.name)
-        if not isinstance(exp, Mapping):
+        if not isinstance(exp, Mapping) or "exit_code" not in exp or "stdout_sha256" not in exp:
             raise HarnessError("benchmark missing from expected digest table")
         rc, sha = fixtures.run_spec_once(spec, work_dir, src)
         ok[spec.name] = (rc == exp.get("exit_code") and sha == exp.get("stdout_sha256"))
@@ -242,7 +254,7 @@ def measure(
     work_dir = run_dir / "work"
     raw_dir = run_dir / "raw"
     fixtures.build(fx_dir)
-    fixtures.materialize(fx_dir, work_dir, src)
+    fixtures.materialize(fx_dir, work_dir, selected)
 
     specs = build_specs(src, work_dir, selected)
     if not specs:
@@ -265,7 +277,7 @@ def measure(
             warm = min(warmup, 1) if spec.group == "SUITE" else warmup
             json_out = raw_dir / f"r{r}-{spec.name}.json"
             ru_out = raw_dir / f"r{r}-{spec.name}.ru"
-            wall_ms, ru_rows = _run_hyperfine_round(
+            wall_ms, ru_rows, all_exits = _run_hyperfine_round(
                 hyperfine_exe,
                 pin_prefix,
                 ru,
@@ -281,11 +293,11 @@ def measure(
             )
             bucket = accum[spec.name]
             bucket["wall_ms"].extend(wall_ms)
-            for utime_us, stime_us, maxrss_kb, rchar, wchar, _syscr, rc in ru_rows:
+            for utime_us, stime_us, maxrss_kb, rchar, wchar, _syscr, _rc in ru_rows:
                 bucket["cpu_ms"].append((utime_us + stime_us) / 1000.0)
                 bucket["rss_kb"].append(maxrss_kb)
                 bucket["io_bytes"].append(rchar + wchar)
-                bucket["exits"].append(rc)
+            bucket["exits"].extend(all_exits)
 
     # Untimed digest check after sampling.
     after_ok = _check_digests(specs, expected, work_dir, src)
@@ -317,7 +329,7 @@ def canaries(run_dir: Path) -> dict[str, float]:
     canary_dir.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
 
-    true_wall, _ = _run_hyperfine_round(
+    true_wall, _, true_exits = _run_hyperfine_round(
         hyperfine_exe,
         pin_prefix,
         ru,
@@ -329,7 +341,9 @@ def canaries(run_dir: Path) -> dict[str, float]:
         json_out=canary_dir / "ru-true.json",
         ru_out=canary_dir / "ru-true.ru",
     )
-    py_wall, _ = _run_hyperfine_round(
+    if any(rc != 0 for rc in true_exits):
+        raise HarnessError("canary command exited non-zero")
+    py_wall, _, py_exits = _run_hyperfine_round(
         hyperfine_exe,
         pin_prefix,
         ru,
@@ -341,6 +355,8 @@ def canaries(run_dir: Path) -> dict[str, float]:
         json_out=canary_dir / "python-startup.json",
         ru_out=canary_dir / "python-startup.ru",
     )
+    if any(rc != 0 for rc in py_exits):
+        raise HarnessError("canary command exited non-zero")
     return {
         "ru_true_p50_ms": float(statistics.median(true_wall)),
         "python_startup_p50_ms": float(statistics.median(py_wall)),
