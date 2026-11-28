@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ByteStackPerfHighWaterMark",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "config_version",
+    "commit",
+    "config_sha256",
+    "calibration_sha256",
+    "fixtures_sha256",
+    "host_fingerprint",
+    "toolchain",
+    "verified_at",
+    "composite",
+    "categories"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "config_version": { "type": "integer", "minimum": 1 },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "config_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "calibration_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "fixtures_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "host_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["python", "hyperfine", "ru_sha256"],
+      "properties": {
+        "python": { "type": "string", "pattern": "^3\\.[0-9]+\\.[0-9]+$" },
+        "hyperfine": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "ru_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "verified_at": { "type": "string", "format": "date-time" },
+    "composite": { "$ref": "#/$defs/score" },
+    "categories": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["HOOK_HOT", "HOOK_LIFECYCLE", "ASSETS", "BRIEFS", "CAPTURE", "EXTRACT", "INIT", "SUITE"],
+      "properties": {
+        "HOOK_HOT": { "$ref": "#/$defs/use" },
+        "HOOK_LIFECYCLE": { "$ref": "#/$defs/use" },
+        "ASSETS": { "$ref": "#/$defs/use" },
+        "BRIEFS": { "$ref": "#/$defs/use" },
+        "CAPTURE": { "$ref": "#/$defs/use" },
+        "EXTRACT": { "$ref": "#/$defs/use" },
+        "INIT": { "$ref": "#/$defs/use" },
+        "SUITE": { "$ref": "#/$defs/use" }
+      }
+    }
+  },
+  "$defs": {
+    "score": { "type": "number", "minimum": 0, "maximum": 100 },
+    "use": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["L", "U", "M", "IO"],
+      "properties": {
+        "L": { "$ref": "#/$defs/score" },
+        "U": { "$ref": "#/$defs/score" },
+        "M": { "$ref": "#/$defs/score" },
+        "IO": { "$ref": "#/$defs/score" }
+      }
+    }
+  }
+}
