@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from contextlib import redirect_stderr, redirect_stdout
 import copy
+import fcntl
 import hashlib
 import io
 import json
 import math
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -335,12 +337,15 @@ class ScanCliTests(unittest.TestCase):
         self.assertIn("chosen=A", out)
         base_a = json.loads(baseline.baseline_path(self.state_dir).read_text(encoding="utf-8"))
 
-        # Case 2: Run B slightly slower (lower composite, still within eps of A). Must pick Run B.
+        # Case 2: Run B slightly slower (lower composite, still within eps of A). Must pick Run B via --reset.
         seq2 = iter([
             _make_samples(group_scale={"INIT": 0.99}),
             _make_samples(group_scale={"INIT": 1.02}),
         ])
-        code, out, err = self._run_main(["init", "--src", str(self.src_dir)], measure=lambda s, g, r, **kw: next(seq2))
+        code, out, err = self._run_main(
+            ["init", "--reset", "--src", str(self.src_dir)],
+            measure=lambda s, g, r, **kw: next(seq2),
+        )
         self.assertEqual(code, 0, err)
         self.assertIn("chosen=B", out)
         base_b = json.loads(baseline.baseline_path(self.state_dir).read_text(encoding="utf-8"))
@@ -352,7 +357,10 @@ class ScanCliTests(unittest.TestCase):
             _make_samples(),
             _make_samples(overrides={"init.fresh-repo": {"wall_ms": [80.0] * 200}}),
         ])
-        code, _, _ = self._run_main(["init", "--src", str(self.src_dir)], measure=lambda s, g, r, **kw: next(seq3))
+        code, _, _ = self._run_main(
+            ["init", "--reset", "--src", str(self.src_dir)],
+            measure=lambda s, g, r, **kw: next(seq3),
+        )
         self.assertEqual(code, 1)
         self.assertEqual(baseline.baseline_path(self.state_dir).read_bytes(), before)
 
@@ -714,6 +722,227 @@ class ScanCliTests(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertNotIn("secret-user", out + err)
             self.assertNotIn("private", out + err)
+
+    def test_init_refuses_existing_baseline_and_reset_replaces(self):
+        before = self._calibrate_and_init()
+        base_before = json.loads(before.decode("utf-8"))
+        runs_before = sorted(p.name for p in (self.state_dir / "runs").iterdir())
+
+        called: list[int] = []
+
+        def slow_measure(src, groups, rdir, **kw):
+            called.append(1)
+            return _make_samples(groups, group_scale={"INIT": 2.0})
+
+        # Plain init must refuse with exit 2 and fixed text without measuring or replacing.
+        code, out, err = self._run_main(["init", "--src", str(self.src_dir)], measure=slow_measure)
+        self.assertEqual(code, 2)
+        self.assertIn("--reset", err)
+        self.assertNotIn(str(self.temp), out + err)
+        self.assertEqual(called, [])
+        self.assertEqual(baseline.baseline_path(self.state_dir).read_bytes(), before)
+        self.assertEqual(sorted(p.name for p in (self.state_dir / "runs").iterdir()), runs_before)
+
+        # init --reset still runs A/B checks and picks the lower composite, deliberately replacing baseline.json.
+        seq = iter([
+            _make_samples(group_scale={"INIT": 2.02}),
+            _make_samples(group_scale={"INIT": 2.00}),
+        ])
+        code, out, err = self._run_main(
+            ["init", "--reset", "--src", str(self.src_dir)],
+            measure=lambda s, g, r, **kw: next(seq),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("chosen=A", out)
+        base_after = json.loads(baseline.baseline_path(self.state_dir).read_text(encoding="utf-8"))
+        self.assertLess(base_after["categories"]["INIT"]["L"], base_before["categories"]["INIT"]["L"])
+
+        # init --reset also works when baseline.json does not exist yet.
+        baseline.baseline_path(self.state_dir).unlink()
+        code, _, err = self._run_main(["init", "--reset", "--src", str(self.src_dir)])
+        self.assertEqual(code, 0, err)
+        self.assertTrue(baseline.baseline_path(self.state_dir).is_file())
+
+    def test_state_lock_refuses_concurrent_scans(self):
+        before = self._calibrate_and_init()
+        base_before = json.loads(before.decode("utf-8"))
+
+        # Overlapping same-process run while another run holds the state lock.
+        nested_outcomes: list[tuple[int, str]] = []
+
+        def interleave(src, groups, rdir, **kw):
+            ic, _, ie = self._run_main(
+                ["run", "--only", "INIT.L", "--src", str(self.src_dir)],
+                measure=lambda s, g, r, **k: _make_samples(g, group_scale={"INIT": 0.65}),
+            )
+            nested_outcomes.append((ic, ie))
+            return _make_samples(groups, group_scale={"ASSETS": 0.65})
+
+        code, _, err = self._run_main(
+            ["run", "--only", "ASSETS.L", "--src", str(self.src_dir)],
+            measure=interleave,
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(nested_outcomes), 1)
+        self.assertEqual(nested_outcomes[0][0], 2)
+        self.assertIn("another scan is using this state folder", nested_outcomes[0][1])
+        base_after = json.loads(baseline.baseline_path(self.state_dir).read_text(encoding="utf-8"))
+        self.assertEqual(base_after["categories"]["INIT"]["L"], base_before["categories"]["INIT"]["L"])
+        self.assertGreater(base_after["categories"]["ASSETS"]["L"], base_before["categories"]["ASSETS"]["L"])
+
+        # Cross-process flock held by another process blocks calibrate, init, and run with exit 2.
+        snapshot = baseline.baseline_path(self.state_dir).read_bytes()
+        lock_fd = os.open(str(baseline.lock_path(self.state_dir)), os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            for argv in (
+                ["calibrate", "--runs", "2", "--src", str(self.src_dir)],
+                ["init", "--reset", "--src", str(self.src_dir)],
+                ["run", "--only", "INIT", "--src", str(self.src_dir)],
+                ["run", "--dry-score", "--only", "INIT", "--src", str(self.src_dir)],
+            ):
+                with self.subTest(argv=argv):
+                    proc = subprocess.run(
+                        [sys.executable, str(PERF_DIR / "scan.py"), *argv],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    self.assertEqual(proc.returncode, 2)
+                    self.assertIn("another scan is using this state folder", proc.stderr)
+                    self.assertNotIn(str(self.temp), proc.stdout + proc.stderr)
+                    self.assertEqual(baseline.baseline_path(self.state_dir).read_bytes(), snapshot)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+
+        # Once unlocked, runs work again.
+        code, _, err = self._run_main(["run", "--only", "INIT", "--src", str(self.src_dir)])
+        self.assertEqual(code, 0, err)
+
+    def test_report_write_failure_before_commit_and_post_commit_failures(self):
+        before = self._calibrate_and_init()
+        base_before = json.loads(before.decode("utf-8"))
+        orig_write = baseline.atomic_write_json
+
+        def fail_report(path: Path, payload):
+            if path.name == "report.json":
+                raise OSError("injected report failure")
+            orig_write(path, payload)
+
+        # Report write failure during run leaves baseline.json byte-identical and exits 2.
+        with mock.patch.object(baseline, "atomic_write_json", fail_report):
+            code, _, _ = self._run_main(
+                ["run", "--only", "INIT.L", "--src", str(self.src_dir)],
+                measure=lambda s, g, r, **kw: _make_samples(g, group_scale={"INIT": 0.65}),
+            )
+        self.assertEqual(code, 2)
+        self.assertEqual(baseline.baseline_path(self.state_dir).read_bytes(), before)
+
+        # Report write failure during init --reset leaves baseline.json byte-identical and exits 2.
+        with mock.patch.object(baseline, "atomic_write_json", fail_report):
+            code, _, _ = self._run_main(
+                ["init", "--reset", "--src", str(self.src_dir)],
+                measure=lambda s, g, r, **kw: _make_samples(g, group_scale={"INIT": 2.0}),
+            )
+        self.assertEqual(code, 2)
+        self.assertEqual(baseline.baseline_path(self.state_dir).read_bytes(), before)
+
+        # Post-commit print failure on run must keep exit 0 after baseline replace commits.
+        with mock.patch("builtins.print", side_effect=BrokenPipeError("stdout closed")):
+            code, _, _ = self._run_main(
+                ["run", "--only", "INIT.L", "--src", str(self.src_dir)],
+                measure=lambda s, g, r, **kw: _make_samples(g, group_scale={"INIT": 0.65}),
+            )
+        self.assertEqual(code, 0)
+        after_print_fail = json.loads(baseline.baseline_path(self.state_dir).read_text(encoding="utf-8"))
+        self.assertGreater(after_print_fail["categories"]["INIT"]["L"], base_before["categories"]["INIT"]["L"])
+
+        # Post-commit prune failure on run must keep exit 0 after baseline replace commits.
+        with mock.patch.object(baseline, "prune_run_dirs", side_effect=OSError("prune denied")):
+            code, _, _ = self._run_main(
+                ["run", "--only", "ASSETS.L", "--src", str(self.src_dir)],
+                measure=lambda s, g, r, **kw: _make_samples(g, group_scale={"ASSETS": 0.65}),
+            )
+        self.assertEqual(code, 0)
+        after_prune_fail = json.loads(baseline.baseline_path(self.state_dir).read_text(encoding="utf-8"))
+        self.assertGreater(after_prune_fail["categories"]["ASSETS"]["L"], base_before["categories"]["ASSETS"]["L"])
+
+        # Post-commit print and prune failures on init --reset must keep exit 0 after commit.
+        with mock.patch("builtins.print", side_effect=BrokenPipeError("stdout closed")), mock.patch.object(
+            baseline, "prune_run_dirs", side_effect=OSError("prune denied")
+        ):
+            code, _, _ = self._run_main(["init", "--reset", "--src", str(self.src_dir)])
+        self.assertEqual(code, 0)
+        after_reset = json.loads(baseline.baseline_path(self.state_dir).read_text(encoding="utf-8"))
+        self.assertAlmostEqual(
+            after_reset["categories"]["INIT"]["L"],
+            base_before["categories"]["INIT"]["L"],
+            places=6,
+        )
+
+    def test_malformed_state_files_and_last_resort_handler(self):
+        before = self._calibrate_and_init()
+
+        # Invalid UTF-8 and ValueError-inducing contents translate to StateError in all three loaders.
+        bad_cfg = self.temp / "bad_config.json"
+        for payload in (b"\xff", b'{"rounds": NaN}', b"not-json"):
+            bad_cfg.write_bytes(payload)
+            with self.assertRaises(baseline.StateError):
+                baseline.load_config(bad_cfg)
+
+        # Malformed field types in config translate to StateError rather than TypeError/ValueError.
+        cfg_data = json.loads(baseline.CONFIG_PATH.read_text(encoding="utf-8"))
+        cfg_data["metric_weights"]["L"] = "bad"
+        bad_cfg.write_text(json.dumps(cfg_data), encoding="utf-8")
+        with self.assertRaises(baseline.StateError):
+            baseline.load_config(bad_cfg)
+
+        bad_state = self.temp / "bad-state"
+        bad_state.mkdir()
+        for payload in (b"\xff", b'{"schema_version": NaN}'):
+            baseline.calibration_path(bad_state).write_bytes(payload)
+            with self.assertRaises(baseline.StateError):
+                baseline.load_calibration(bad_state)
+
+            baseline.baseline_path(bad_state).write_bytes(payload)
+            with self.assertRaises(baseline.StateError):
+                baseline.load_baseline(bad_state)
+
+        # Last-resort handler in main(): fixed text without PERF_DEBUG, traceback only with PERF_DEBUG=1.
+        secret_marker = "unexpected-secret-token-/example/private-dir"
+
+        def explode(src, groups, rdir, **kw):
+            raise RuntimeError(secret_marker)
+
+        with mock.patch.dict(os.environ, {"PERF_DEBUG": ""}):
+            code, out, err = self._run_main(["run", "--only", "INIT", "--src", str(self.src_dir)], measure=explode)
+        self.assertEqual(code, 2)
+        self.assertIn("internal error", err)
+        self.assertNotIn(secret_marker, out + err)
+        self.assertNotIn("Traceback", out + err)
+        self.assertEqual(baseline.baseline_path(self.state_dir).read_bytes(), before)
+
+        with mock.patch.dict(os.environ, {"PERF_DEBUG": "1"}):
+            code, out, err = self._run_main(["run", "--only", "INIT", "--src", str(self.src_dir)], measure=explode)
+        self.assertEqual(code, 2)
+        self.assertIn("internal error", err)
+        self.assertIn("Traceback", err)
+        self.assertEqual(baseline.baseline_path(self.state_dir).read_bytes(), before)
+
+        # Real CLI subprocess against invalid UTF-8 baseline exits 2 with fixed text and no path leak.
+        baseline.baseline_path(self.state_dir).write_bytes(b"\xff")
+        proc = subprocess.run(
+            [sys.executable, str(PERF_DIR / "scan.py"), "run", "--only", "INIT"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("missing or invalid baseline file", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+        self.assertNotIn(str(ROOT), proc.stdout + proc.stderr)
+        self.assertNotIn(str(self.temp), proc.stdout + proc.stderr)
 
 
 if __name__ == "__main__":

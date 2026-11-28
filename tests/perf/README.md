@@ -19,7 +19,8 @@ Run every command from the repository root.
 | Command | What it does | Time |
 | --- | --- | --- |
 | `python3 tests/perf/scan.py calibrate --runs 8` | Runs 8 identical scans and writes this host's anchors, noise floors and canary values to `calibration.json`. | about 95 min |
-| `python3 tests/perf/scan.py init` | Runs two scans, A and B. If B shows no regression against A, writes the one with the lower composite score as `baseline.json`. | about 25 min |
+| `python3 tests/perf/scan.py init` | Runs two scans, A and B. If B shows no regression against A, writes the one with the lower composite score as `baseline.json`. Exits 2 if `baseline.json` already exists. | about 25 min |
+| `python3 tests/perf/scan.py init --reset` | Deliberately replaces an existing `baseline.json` after the same A/B check and lower-composite pick. | about 25 min |
 | `python3 tests/perf/scan.py run` | Measures, scores, compares with the baseline, and raises any mark that improved beyond the noise floor. | about 12 min |
 | `python3 tests/perf/scan.py run --only ASSETS,INIT.L` | Measures and judges only those categories. Every other category is reported as `not measured` and its mark stays as it is. | seconds to minutes |
 | `python3 tests/perf/scan.py run --quick` | The same as `--only` with every group but `SUITE`. | about 6 min |
@@ -54,6 +55,7 @@ All state is local to this host, in `$XDG_STATE_HOME/byte-stack-perf/` (default 
 
 - `calibration.json`: the anchors, noise floors, canary values and host fingerprint.
 - `baseline.json`: one high-water mark per category and no history. It validates against `baseline.schema.json`.
+- `.lock`: exclusive non-blocking lock held while a scan runs; a concurrent scan in the same state folder exits 2.
 - `runs/<utc>/`: the newest 3 runs' raw samples and `report.json`.
 
 The host fingerprint is a SHA-256 of the CPU model, core count, CPU governor, kernel major version and the Python and hyperfine versions. If any of them changes, the scan exits 2 until you run `calibrate` and `init` again.

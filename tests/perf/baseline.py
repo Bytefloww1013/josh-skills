@@ -1,7 +1,10 @@
 """Baseline, calibration, config, schema validation, and atomic persistence."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
+import errno
+import fcntl
 import hashlib
 import json
 import math
@@ -11,7 +14,7 @@ import re
 import shutil
 import sys
 import tempfile
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
 PERF_DIR = Path(__file__).resolve().parent
 if str(PERF_DIR) not in sys.path:
@@ -50,6 +53,40 @@ def calibration_path(state_dir: Path) -> Path:
     return state_dir / "calibration.json"
 
 
+def lock_path(state_dir: Path) -> Path:
+    return state_dir / ".lock"
+
+
+@contextmanager
+def state_lock(state_dir: Path) -> Iterator[None]:
+    """Hold an exclusive non-blocking flock on <state_dir>/.lock for the duration of a scan."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    path = lock_path(state_dir)
+    fd = os.open(str(path), os.O_CREAT | os.O_RDWR, 0o600)
+    locked = False
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            locked = True
+        except BlockingIOError as exc:
+            raise StateError("another scan is using this state folder") from exc
+        except OSError as exc:
+            if exc.errno in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK):
+                raise StateError("another scan is using this state folder") from exc
+            raise
+        yield
+    finally:
+        if locked:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -69,13 +106,16 @@ def make_run_dir(state_dir: Path) -> Path:
 
 def prune_run_dirs(state_dir: Path, keep: int = 3) -> None:
     runs_root = state_dir / "runs"
-    if not runs_root.is_dir():
+    try:
+        if not runs_root.is_dir():
+            return
+        entries = sorted(
+            (p for p in runs_root.iterdir() if p.is_dir()),
+            key=lambda p: p.name,
+            reverse=True,
+        )
+    except OSError:
         return
-    entries = sorted(
-        (p for p in runs_root.iterdir() if p.is_dir()),
-        key=lambda p: p.name,
-        reverse=True,
-    )
     for stale in entries[keep:]:
         shutil.rmtree(stale, ignore_errors=True)
 
@@ -205,10 +245,22 @@ def validate_against_schema(
     return errors
 
 
+def _reject_json_constant(token: str) -> Any:
+    raise ValueError("non-finite JSON constant")
+
+
+def _is_finite_number(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)
+
+
+def _is_int_at_least(value: Any, minimum: int) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int) and value >= minimum
+
+
 def load_schema(path: Path = BASELINE_SCHEMA_PATH) -> dict[str, Any]:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        data = json.loads(path.read_text(encoding="utf-8"), parse_constant=_reject_json_constant)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
         raise StateError("invalid baseline schema file") from exc
     if not isinstance(data, dict):
         raise StateError("invalid baseline schema file")
@@ -225,8 +277,8 @@ def validate_baseline(record: Any, schema: Mapping[str, Any] | None = None) -> N
 def load_config(path: Path = CONFIG_PATH) -> tuple[dict[str, Any], str]:
     try:
         raw = path.read_bytes()
-        cfg = json.loads(raw.decode("utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        cfg = json.loads(raw.decode("utf-8"), parse_constant=_reject_json_constant)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
         raise StateError("invalid config file") from exc
 
     if not isinstance(cfg, dict):
@@ -245,6 +297,48 @@ def load_config(path: Path = CONFIG_PATH) -> tuple[dict[str, Any], str]:
     if not required.issubset(cfg.keys()):
         raise StateError("invalid config file")
 
+    if (
+        not _is_int_at_least(cfg["config_version"], 1)
+        or not _is_int_at_least(cfg["rounds"], 1)
+        or not _is_int_at_least(cfg["warmup"], 0)
+        or not _is_int_at_least(cfg["keep_runs"], 1)
+    ):
+        raise StateError("invalid config file")
+
+    anchor_mult = cfg["anchor_multipliers"]
+    if (
+        not isinstance(anchor_mult, dict)
+        or not _is_finite_number(anchor_mult.get("g_p50"))
+        or not _is_finite_number(anchor_mult.get("k_p95"))
+        or anchor_mult["g_p50"] <= 0
+        or anchor_mult["k_p95"] <= 0
+    ):
+        raise StateError("invalid config file")
+
+    eps_cfg = cfg["eps"]
+    if (
+        not isinstance(eps_cfg, dict)
+        or not _is_finite_number(eps_cfg.get("min"))
+        or not _is_finite_number(eps_cfg.get("iqr_fence"))
+        or eps_cfg["min"] < 0
+        or eps_cfg["iqr_fence"] < 0
+    ):
+        raise StateError("invalid config file")
+
+    host_gate = cfg["host_gate"]
+    if (
+        not isinstance(host_gate, dict)
+        or not _is_finite_number(host_gate.get("canary_max_rel_diff"))
+        or not _is_finite_number(host_gate.get("max_loadavg_1m"))
+        or host_gate["canary_max_rel_diff"] < 0
+        or host_gate["max_loadavg_1m"] < 0
+    ):
+        raise StateError("invalid config file")
+    if "load_wait_s" in host_gate and (
+        not _is_finite_number(host_gate["load_wait_s"]) or host_gate["load_wait_s"] < 0
+    ):
+        raise StateError("invalid config file")
+
     groups = cfg["groups"]
     metric_weights = cfg["metric_weights"]
     if not isinstance(groups, dict) or set(groups.keys()) != set(scoring.GROUPS):
@@ -256,9 +350,13 @@ def load_config(path: Path = CONFIG_PATH) -> tuple[dict[str, Any], str]:
         entry = groups[g]
         if not isinstance(entry, dict) or "weight" not in entry or "n" not in entry:
             raise StateError("invalid config file")
-        if isinstance(entry["n"], bool) or not isinstance(entry["n"], int) or entry["n"] < 1:
+        if not _is_int_at_least(entry["n"], 1):
             raise StateError("invalid config file")
-        if isinstance(entry["weight"], bool) or not isinstance(entry["weight"], (int, float)) or entry["weight"] <= 0:
+        if not _is_finite_number(entry["weight"]) or entry["weight"] <= 0:
+            raise StateError("invalid config file")
+
+    for m in scoring.METRICS:
+        if not _is_finite_number(metric_weights[m]) or metric_weights[m] <= 0:
             raise StateError("invalid config file")
 
     if not math.isclose(sum(groups[g]["weight"] for g in scoring.GROUPS), 1.0, abs_tol=1e-6):
@@ -323,8 +421,8 @@ def load_calibration(state_dir: Path) -> tuple[dict[str, Any], str]:
     path = calibration_path(state_dir)
     try:
         raw = path.read_bytes()
-        data = json.loads(raw.decode("utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        data = json.loads(raw.decode("utf-8"), parse_constant=_reject_json_constant)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
         raise StateError("missing or invalid calibration file") from exc
     validate_calibration(data)
     return data, hashlib.sha256(raw).hexdigest()
@@ -338,8 +436,8 @@ def save_calibration(state_dir: Path, data: Mapping[str, Any]) -> None:
 def load_baseline(state_dir: Path) -> dict[str, Any]:
     path = baseline_path(state_dir)
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        data = json.loads(path.read_text(encoding="utf-8"), parse_constant=_reject_json_constant)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
         raise StateError("missing or invalid baseline file") from exc
     validate_baseline(data)
     return data

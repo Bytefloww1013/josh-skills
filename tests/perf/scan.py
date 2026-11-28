@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import tarfile
+import traceback
 from typing import Any, Callable, Mapping, Sequence
 
 PERF_DIR = Path(__file__).resolve().parent
@@ -49,6 +50,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_init = sub.add_parser("init", help="Run A/B scans and write initial baseline.json")
     p_init.add_argument("--src", type=str, default=None, help="Plugin tree directory override")
+    p_init.add_argument(
+        "--reset",
+        action="store_true",
+        help="Replace an existing baseline.json after A/B checks pass",
+    )
 
     p_run = sub.add_parser("run", help="Measure, score, compare against baseline, and optionally update")
     p_run.add_argument("--only", type=str, default=None, help="Comma-separated GROUP or GROUP.METRIC selectors")
@@ -262,6 +268,14 @@ def _cat_label(cat: tuple[str, str]) -> str:
     return f"{cat[0]}.{cat[1]}"
 
 
+def _emit_post_commit(text: str) -> None:
+    """Print a summary after a committed state write without altering the exit code."""
+    try:
+        print(text)
+    except Exception:
+        pass
+
+
 def _format_run_summary(report: Mapping[str, Any]) -> str:
     lines: list[str] = []
     exit_code = report["exit_code"]
@@ -361,7 +375,7 @@ def _cmd_calibrate(
     build_fixtures: Callable[..., Any],
     loadavg_fn: Callable[[], float],
     sleep_fn: Callable[[float], None],
-) -> int:
+) -> tuple[int, bool]:
     if args.runs < 2:
         raise _CliError("invalid --runs value")
 
@@ -444,7 +458,7 @@ def _cmd_calibrate(
 
     if violations:
         print("error: calibration noise fence too tight", file=sys.stderr)
-        return 2
+        return 2, False
 
     cal_record = {
         "schema_version": 1,
@@ -458,12 +472,13 @@ def _cmd_calibrate(
         "anchors": anchors,
         "eps": eps,
     }
-    baseline.save_calibration(state_dir, cal_record)
     eps_vals = [eps[g][m] for g in scoring.GROUPS for m in scoring.METRICS]
-    print(
+    summary = (
         f"result: CALIBRATED (runs={args.runs}, eps min={min(eps_vals):.2f}, max={max(eps_vals):.2f})"
     )
-    return 0
+    baseline.save_calibration(state_dir, cal_record)
+    _emit_post_commit(summary)
+    return 0, True
 
 
 def _cmd_init(
@@ -480,7 +495,10 @@ def _cmd_init(
     build_fixtures: Callable[..., Any],
     loadavg_fn: Callable[[], float],
     sleep_fn: Callable[[float], None],
-) -> int:
+) -> tuple[int, bool]:
+    if not args.reset and os.path.lexists(baseline.baseline_path(state_dir)):
+        raise _CliError("baseline already exists; pass --reset to replace it")
+
     cal, cal_sha = baseline.load_calibration(state_dir)
 
     _check_loadavg(config, loadavg_fn, sleep_fn)
@@ -554,7 +572,7 @@ def _cmd_init(
             f"result: INIT_FAILED (composite_a={comp_a:.2f}, composite_b={comp_b:.2f}, "
             f"regressed={', '.join(_cat_label(c) for c in reg_cats)})"
         )
-        return 1
+        return 1, False
 
     chosen_label = "A" if comp_a <= comp_b else "B"
     chosen = scored_a if comp_a <= comp_b else scored_b
@@ -574,8 +592,6 @@ def _cmd_init(
         toolchain=tc,
         categories=chosen_marks,
     )
-    baseline.save_baseline(state_dir, record)
-
     report = {
         "command": "init",
         "exit_code": 0,
@@ -585,12 +601,15 @@ def _cmd_init(
         "composite_b": comp_b,
         "composite": chosen_comp,
     }
-    baseline.atomic_write_json(run_dir / "report.json", report)
-    print(
+    summary = (
         f"result: INITIALIZED (chosen={chosen_label}, composite={chosen_comp:.2f}, "
         f"composite_a={comp_a:.2f}, composite_b={comp_b:.2f})"
     )
-    return 0
+    baseline.atomic_write_json(run_dir / "report.json", report)
+    # Atomic baseline replace is the commit point.
+    baseline.save_baseline(state_dir, record)
+    _emit_post_commit(summary)
+    return 0, True
 
 
 def _cmd_run(
@@ -607,7 +626,7 @@ def _cmd_run(
     build_fixtures: Callable[..., Any],
     loadavg_fn: Callable[[], float],
     sleep_fn: Callable[[float], None],
-) -> int:
+) -> tuple[int, bool]:
     selected_groups = scoring.groups_for_categories(selected_categories)
     partial = len(selected_categories) != len(scoring.ALL_CATEGORIES)
 
@@ -630,7 +649,7 @@ def _cmd_run(
         }
         baseline.atomic_write_json(run_dir / "report.json", report)
         print(f"result: DRY_SCORE (benchmarks={len(counts)})")
-        return 0
+        return 0, False
 
     cal, cal_sha = baseline.load_calibration(state_dir)
     base = baseline.load_baseline(state_dir)
@@ -689,8 +708,9 @@ def _cmd_run(
         selected=selected_categories,
     )
 
-    baseline_updated = False
-    if comparison.exit_code == 0 and comparison.raised and not args.no_update:
+    will_update = comparison.exit_code == 0 and bool(comparison.raised) and not args.no_update
+    updated: dict[str, Any] | None = None
+    if will_update:
         commit = _get_head_commit()
         updated = baseline.update_baseline_record(
             base,
@@ -699,8 +719,6 @@ def _cmd_run(
             raised=comparison.raised,
             commit=commit,
         )
-        baseline.save_baseline(state_dir, updated)
-        baseline_updated = True
 
     regressed_set = set(comparison.regressed)
     raised_set = set(comparison.raised)
@@ -740,7 +758,7 @@ def _cmd_run(
         "selected_categories": [_cat_label(c) for c in selected_categories],
         "composite": comp_value,
         "composite_weight": comp_weight,
-        "baseline_updated": baseline_updated,
+        "baseline_updated": will_update,
         "raised": [
             {
                 "category": _cat_label(c),
@@ -765,9 +783,17 @@ def _cmd_run(
         "not_measured": [_cat_label(c) for c in comparison.not_measured],
         "categories": categories_report,
     }
+    summary = _format_run_summary(report)
     baseline.atomic_write_json(run_dir / "report.json", report)
-    print(_format_run_summary(report))
-    return comparison.exit_code
+
+    committed = False
+    if updated is not None:
+        # Atomic baseline replace is the commit point.
+        baseline.save_baseline(state_dir, updated)
+        committed = True
+
+    _emit_post_commit(summary)
+    return comparison.exit_code, committed
 
 
 def main(
@@ -781,97 +807,117 @@ def main(
     loadavg: Callable[[], float] | None = None,
     sleep: Callable[[float], None] | None = None,
 ) -> int:
-    parser = _build_parser()
     try:
-        args = parser.parse_args(argv)
-    except SystemExit as exc:
-        return 0 if exc.code == 0 else 2
-    except _CliError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-
-    loadavg_fn = _get_loadavg_1m if loadavg is None else loadavg
-    sleep_fn = time.sleep if sleep is None else sleep
-    state_dir = baseline.state_dir_from_env()
-    run_dir: Path | None = None
-    keep_runs = 3
-
-    try:
-        selected_categories: tuple[tuple[str, str], ...] = scoring.ALL_CATEGORIES
-        if args.command == "calibrate" and args.runs < 2:
-            raise _CliError("invalid --runs value")
-        if args.command == "run":
-            selected_categories = _parse_run_selection(args)
-
-        config, config_sha = baseline.load_config()
-        keep_runs = int(config["keep_runs"])
-        run_dir = baseline.make_run_dir(state_dir)
-
-        measure_fn, canaries_fn, fp_fn, tc_getter, fixtures_fn = _load_default_seam(
-            measure=measure,
-            canaries=canaries,
-            fingerprint=fingerprint,
-            toolchain=toolchain,
-            build_fixtures=build_fixtures,
-        )
-
-        if args.command == "calibrate":
-            code = _cmd_calibrate(
-                args,
-                config=config,
-                config_sha=config_sha,
-                state_dir=state_dir,
-                run_dir=run_dir,
-                measure=measure_fn,
-                canaries=canaries_fn,
-                fingerprint=fp_fn,
-                build_fixtures=fixtures_fn,
-                loadavg_fn=loadavg_fn,
-                sleep_fn=sleep_fn,
-            )
-        elif args.command == "init":
-            code = _cmd_init(
-                args,
-                config=config,
-                config_sha=config_sha,
-                state_dir=state_dir,
-                run_dir=run_dir,
-                measure=measure_fn,
-                canaries=canaries_fn,
-                fingerprint=fp_fn,
-                tc_getter=tc_getter,
-                build_fixtures=fixtures_fn,
-                loadavg_fn=loadavg_fn,
-                sleep_fn=sleep_fn,
-            )
-        elif args.command == "run":
-            code = _cmd_run(
-                args,
-                selected_categories=selected_categories,
-                config=config,
-                config_sha=config_sha,
-                state_dir=state_dir,
-                run_dir=run_dir,
-                measure=measure_fn,
-                canaries=canaries_fn,
-                fingerprint=fp_fn,
-                build_fixtures=fixtures_fn,
-                loadavg_fn=loadavg_fn,
-                sleep_fn=sleep_fn,
-            )
-        else:
-            print("error: unknown subcommand", file=sys.stderr)
+        parser = _build_parser()
+        try:
+            args = parser.parse_args(argv)
+        except SystemExit as exc:
+            return 0 if exc.code == 0 else 2
+        except _CliError as exc:
+            print(f"error: {exc}", file=sys.stderr)
             return 2
-        return code
-    except (_CliError, _HarnessFailure, baseline.StateError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+
+        loadavg_fn = _get_loadavg_1m if loadavg is None else loadavg
+        sleep_fn = time.sleep if sleep is None else sleep
+        state_dir = baseline.state_dir_from_env()
+        run_dir: Path | None = None
+        keep_runs = 3
+        committed = False
+
+        try:
+            selected_categories: tuple[tuple[str, str], ...] = scoring.ALL_CATEGORIES
+            if args.command == "calibrate" and args.runs < 2:
+                raise _CliError("invalid --runs value")
+            if args.command == "run":
+                selected_categories = _parse_run_selection(args)
+
+            with baseline.state_lock(state_dir):
+                try:
+                    config, config_sha = baseline.load_config()
+                    keep_runs = int(config["keep_runs"])
+                    if args.command == "init" and not args.reset and os.path.lexists(
+                        baseline.baseline_path(state_dir)
+                    ):
+                        raise _CliError("baseline already exists; pass --reset to replace it")
+
+                    run_dir = baseline.make_run_dir(state_dir)
+
+                    measure_fn, canaries_fn, fp_fn, tc_getter, fixtures_fn = _load_default_seam(
+                        measure=measure,
+                        canaries=canaries,
+                        fingerprint=fingerprint,
+                        toolchain=toolchain,
+                        build_fixtures=build_fixtures,
+                    )
+
+                    if args.command == "calibrate":
+                        code, committed = _cmd_calibrate(
+                            args,
+                            config=config,
+                            config_sha=config_sha,
+                            state_dir=state_dir,
+                            run_dir=run_dir,
+                            measure=measure_fn,
+                            canaries=canaries_fn,
+                            fingerprint=fp_fn,
+                            build_fixtures=fixtures_fn,
+                            loadavg_fn=loadavg_fn,
+                            sleep_fn=sleep_fn,
+                        )
+                    elif args.command == "init":
+                        code, committed = _cmd_init(
+                            args,
+                            config=config,
+                            config_sha=config_sha,
+                            state_dir=state_dir,
+                            run_dir=run_dir,
+                            measure=measure_fn,
+                            canaries=canaries_fn,
+                            fingerprint=fp_fn,
+                            tc_getter=tc_getter,
+                            build_fixtures=fixtures_fn,
+                            loadavg_fn=loadavg_fn,
+                            sleep_fn=sleep_fn,
+                        )
+                    elif args.command == "run":
+                        code, committed = _cmd_run(
+                            args,
+                            selected_categories=selected_categories,
+                            config=config,
+                            config_sha=config_sha,
+                            state_dir=state_dir,
+                            run_dir=run_dir,
+                            measure=measure_fn,
+                            canaries=canaries_fn,
+                            fingerprint=fp_fn,
+                            build_fixtures=fixtures_fn,
+                            loadavg_fn=loadavg_fn,
+                            sleep_fn=sleep_fn,
+                        )
+                    else:
+                        print("error: unknown subcommand", file=sys.stderr)
+                        return 2
+                    return code
+                finally:
+                    if run_dir is not None:
+                        try:
+                            baseline.prune_run_dirs(state_dir, keep=keep_runs)
+                        except OSError:
+                            pass
+                        except Exception:
+                            if not committed:
+                                raise
+        except (_CliError, _HarnessFailure, baseline.StateError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        except OSError:
+            print("error: filesystem or process error", file=sys.stderr)
+            return 2
+    except Exception:
+        print("error: internal error", file=sys.stderr)
+        if os.environ.get("PERF_DEBUG") == "1":
+            traceback.print_exc(file=sys.stderr)
         return 2
-    except OSError:
-        print("error: filesystem or process error", file=sys.stderr)
-        return 2
-    finally:
-        if run_dir is not None:
-            baseline.prune_run_dirs(state_dir, keep=keep_runs)
 
 
 if __name__ == "__main__":
