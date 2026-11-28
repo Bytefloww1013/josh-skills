@@ -245,6 +245,7 @@ class ScanCliTests(unittest.TestCase):
                 toolchain=toolchain if toolchain is not None else (lambda rdir: dict(FAKE_TOOLCHAIN)),
                 build_fixtures=build_fixtures if build_fixtures is not None else (lambda root: FAKE_FX_SHA),
                 loadavg=loadavg if loadavg is not None else (lambda: 0.25),
+                sleep=lambda seconds: None,
             )
         return code, out_buf.getvalue(), err_buf.getvalue()
 

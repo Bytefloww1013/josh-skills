@@ -72,23 +72,14 @@ class PerfSamplerTests(unittest.TestCase):
 
         def run_ru(argv: list[str]) -> list[int]:
             ru_out = self.tmp / "ru.out"
-            fd = os.open(str(ru_out), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_APPEND, 0o600)
-
-            def dup3():
-                if fd != 3:
-                    os.dup2(fd, 3)
-                    os.close(fd)
-
-            try:
-                proc = subprocess.run(
-                    [str(ru), *argv],
-                    pass_fds=(fd,),
-                    preexec_fn=dup3,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                )
-            finally:
-                os.close(fd)
+            ru_out.write_bytes(b"")
+            # Open fd 3 through a shell redirect, as sampler.py does (a preexec_fn dup2 is undone on Python 3.9).
+            proc = subprocess.run(
+                ["sh", "-c", 'exec "$@" 3>>"$PERF_RU_OUT"', "sh", str(ru), *argv],
+                env={**os.environ, "PERF_RU_OUT": str(ru_out)},
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
             self.assertEqual(proc.returncode, 0, proc.stderr.decode("utf-8", errors="replace"))
             lines = [line for line in ru_out.read_text(encoding="utf-8").splitlines() if line.strip()]
             self.assertEqual(len(lines), 1)

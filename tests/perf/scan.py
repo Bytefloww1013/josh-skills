@@ -6,6 +6,7 @@ import argparse
 import inspect
 import io
 import os
+import time
 from pathlib import Path
 import re
 import subprocess
@@ -188,15 +189,29 @@ def _resolve_toolchain(
     return fingerprint_mod.toolchain(ru_bin)
 
 
-def _check_loadavg(config: Mapping[str, Any], loadavg_fn: Callable[[], float]) -> float:
+def _check_loadavg(
+    config: Mapping[str, Any],
+    loadavg_fn: Callable[[], float],
+    sleep_fn: Callable[[float], None] = time.sleep,
+) -> float:
+    """Wait up to host_gate.load_wait_s for the 1-minute load average to settle at or below the limit.
+
+    A finished scan keeps one core busy, so the load average right after it is near 1.0 and decays over about a minute;
+    waiting lets back-to-back scans (calibrate, then init, then run) start on a quiet host instead of exiting 2."""
     limit = float(config["host_gate"]["max_loadavg_1m"])
-    try:
-        current = float(loadavg_fn())
-    except OSError as exc:
-        raise _HarnessFailure("unable to read host load average") from exc
-    if current > limit:
-        raise _HarnessFailure("host load average above limit")
-    return current
+    wait_s = float(config["host_gate"].get("load_wait_s", 0))
+    step = 5.0
+    attempts = int(wait_s // step)
+    for attempt in range(attempts + 1):
+        try:
+            current = float(loadavg_fn())
+        except OSError as exc:
+            raise _HarnessFailure("unable to read host load average") from exc
+        if current <= limit:
+            return current
+        if attempt < attempts:
+            sleep_fn(step)
+    raise _HarnessFailure("host load average above limit")
 
 
 def _check_canaries(
@@ -345,11 +360,12 @@ def _cmd_calibrate(
     fingerprint: Callable[..., Any],
     build_fixtures: Callable[..., Any],
     loadavg_fn: Callable[[], float],
+    sleep_fn: Callable[[float], None],
 ) -> int:
     if args.runs < 2:
         raise _CliError("invalid --runs value")
 
-    _check_loadavg(config, loadavg_fn)
+    _check_loadavg(config, loadavg_fn, sleep_fn)
     host_fp = _check_fingerprint_value(_call_harness(fingerprint))
     fixtures_sha = _check_sha64_value(
         _call_harness(build_fixtures, run_dir / "fixtures"), "fixtures"
@@ -463,10 +479,11 @@ def _cmd_init(
     tc_getter: Callable[[Path], Mapping[str, Any]] | None,
     build_fixtures: Callable[..., Any],
     loadavg_fn: Callable[[], float],
+    sleep_fn: Callable[[float], None],
 ) -> int:
     cal, cal_sha = baseline.load_calibration(state_dir)
 
-    _check_loadavg(config, loadavg_fn)
+    _check_loadavg(config, loadavg_fn, sleep_fn)
     host_fp = _check_fingerprint_value(_call_harness(fingerprint))
     if host_fp != cal["host_fingerprint"]:
         raise _HarnessFailure("host fingerprint mismatch")
@@ -589,6 +606,7 @@ def _cmd_run(
     fingerprint: Callable[..., Any],
     build_fixtures: Callable[..., Any],
     loadavg_fn: Callable[[], float],
+    sleep_fn: Callable[[float], None],
 ) -> int:
     selected_groups = scoring.groups_for_categories(selected_categories)
     partial = len(selected_categories) != len(scoring.ALL_CATEGORIES)
@@ -622,7 +640,7 @@ def _cmd_run(
     if base["calibration_sha256"] != cal_sha:
         raise _HarnessFailure("baseline calibration mismatch")
 
-    _check_loadavg(config, loadavg_fn)
+    _check_loadavg(config, loadavg_fn, sleep_fn)
     host_fp = _check_fingerprint_value(_call_harness(fingerprint))
     if host_fp != cal["host_fingerprint"] or host_fp != base["host_fingerprint"]:
         raise _HarnessFailure("host fingerprint mismatch")
@@ -761,6 +779,7 @@ def main(
     toolchain: Callable[..., Any] | None = None,
     build_fixtures: Callable[..., Any] | None = None,
     loadavg: Callable[[], float] | None = None,
+    sleep: Callable[[float], None] | None = None,
 ) -> int:
     parser = _build_parser()
     try:
@@ -772,6 +791,7 @@ def main(
         return 2
 
     loadavg_fn = _get_loadavg_1m if loadavg is None else loadavg
+    sleep_fn = time.sleep if sleep is None else sleep
     state_dir = baseline.state_dir_from_env()
     run_dir: Path | None = None
     keep_runs = 3
@@ -807,6 +827,7 @@ def main(
                 fingerprint=fp_fn,
                 build_fixtures=fixtures_fn,
                 loadavg_fn=loadavg_fn,
+                sleep_fn=sleep_fn,
             )
         elif args.command == "init":
             code = _cmd_init(
@@ -821,6 +842,7 @@ def main(
                 tc_getter=tc_getter,
                 build_fixtures=fixtures_fn,
                 loadavg_fn=loadavg_fn,
+                sleep_fn=sleep_fn,
             )
         elif args.command == "run":
             code = _cmd_run(
@@ -835,6 +857,7 @@ def main(
                 fingerprint=fp_fn,
                 build_fixtures=fixtures_fn,
                 loadavg_fn=loadavg_fn,
+                sleep_fn=sleep_fn,
             )
         else:
             print("error: unknown subcommand", file=sys.stderr)

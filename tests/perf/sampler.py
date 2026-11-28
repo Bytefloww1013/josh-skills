@@ -140,27 +140,20 @@ def _run_hyperfine_round(
         hf_cmd.extend(["--prepare", prepare_cmd])
     hf_cmd.append(cmd_str)
 
-    fd = os.open(str(ru_out), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_APPEND, 0o600)
-
-    def _dup_to_fd3() -> None:
-        if fd != 3:
-            os.dup2(fd, 3)
-            os.close(fd)
-
+    # `sh` opens the ru output on fd 3 (append) and then execs hyperfine, so every measured command inherits it. This avoids a
+    # preexec_fn dup2, which Python 3.9 undoes when it closes fds not listed in pass_fds.
+    ru_out.write_bytes(b"")
+    os.chmod(ru_out, 0o600)
     try:
         proc = subprocess.run(
-            hf_cmd,
+            ["sh", "-c", 'exec "$@" 3>>"$PERF_RU_OUT"', "sh", *hf_cmd],
             cwd=str(cwd),
-            env=dict(env),
-            pass_fds=(fd,),
-            preexec_fn=_dup_to_fd3,
+            env={**dict(env), "PERF_RU_OUT": str(ru_out)},
             capture_output=True,
             text=True,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise HarnessError("hyperfine invocation failed") from exc
-    finally:
-        os.close(fd)
 
     if proc.returncode != 0:
         raise HarnessError("hyperfine exited non-zero")
