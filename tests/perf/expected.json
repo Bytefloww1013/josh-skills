@@ -1,0 +1,132 @@
+{
+  "assets.list-playbooks": {
+    "exit_code": 0,
+    "group": "ASSETS",
+    "stdout_sha256": "3842ca05f85c719b63039e7d731acb17f6fb35b48f13175bb3e2c68d1235b346"
+  },
+  "assets.list-references": {
+    "exit_code": 0,
+    "group": "ASSETS",
+    "stdout_sha256": "0588f9a037331da0f135feed71492d1654c0876631afc96c48b38a6e4d51fe37"
+  },
+  "assets.resolve-bundled": {
+    "exit_code": 0,
+    "group": "ASSETS",
+    "stdout_sha256": "2aaaf108aa8240da6a985dde4e2fe58f4f3d32793c5c34abddf5a4a55e0e0115"
+  },
+  "assets.resolve-override": {
+    "exit_code": 0,
+    "group": "ASSETS",
+    "stdout_sha256": "076bfa3025eb78f666612dcdb02dd4b4019340981fc20f1a7117f8aaa1e17b77"
+  },
+  "briefs.check-report-reviewer": {
+    "exit_code": 0,
+    "group": "BRIEFS",
+    "stdout_sha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431"
+  },
+  "briefs.fill-keys-implementor": {
+    "exit_code": 0,
+    "group": "BRIEFS",
+    "stdout_sha256": "79dc82f2203cf72e18163d120e15162f3cc889dfc90a0d50615f75ef39be3976"
+  },
+  "briefs.fill-reviewer": {
+    "exit_code": 0,
+    "group": "BRIEFS",
+    "stdout_sha256": "448ea7a3749a61529133e6054ec2e3da6793bb48a2874a9f40ce8eb6b138cb26"
+  },
+  "capture.schema": {
+    "exit_code": 0,
+    "group": "CAPTURE",
+    "stdout_sha256": "ffbd9c99a361c7c1e4149cb25ce74623b4986b4b95c162c742c840ef289547a7"
+  },
+  "capture.validate": {
+    "exit_code": 0,
+    "group": "CAPTURE",
+    "stdout_sha256": "d623d95469e9b99a78e8be2540c081f8dfa08855140eba74822bdf65f5977c7d"
+  },
+  "capture.write-dry-run": {
+    "exit_code": 0,
+    "group": "CAPTURE",
+    "stdout_sha256": "2953cb0c5952d5c0773be7704c261e3accef8f56d4f4ed08124fd509c7d29303"
+  },
+  "extract.inventory": {
+    "exit_code": 0,
+    "group": "EXTRACT",
+    "stdout_sha256": "820eb4c5cfb5d2c59363dccebc08795f7491297bfde364f27baffb901986c7c5"
+  },
+  "extract.write-dry-run": {
+    "exit_code": 0,
+    "group": "EXTRACT",
+    "stdout_sha256": "3b12d58e8c00a1ac9ee2d5e5a3a0ca0a31b46db5b36be2ff4b2679291430c37d"
+  },
+  "hook.noop.handoff0": {
+    "exit_code": 0,
+    "group": "HOOK_HOT",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "hook.post.off.1m": {
+    "exit_code": 0,
+    "group": "HOOK_HOT",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "hook.post.off.4m-noboundary": {
+    "exit_code": 0,
+    "group": "HOOK_HOT",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "hook.post.off.64k": {
+    "exit_code": 0,
+    "group": "HOOK_HOT",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "hook.post.off.8m-boundary": {
+    "exit_code": 0,
+    "group": "HOOK_HOT",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "hook.pre.off.4m": {
+    "exit_code": 0,
+    "group": "HOOK_HOT",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "hook.pre.pending.4m.allow": {
+    "exit_code": 0,
+    "group": "HOOK_HOT",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "hook.pre.pending.4m.deny": {
+    "exit_code": 0,
+    "group": "HOOK_HOT",
+    "stdout_sha256": "59c95a00dda7e37f333169e400481c62a72269a99cbc1824ae1db4c3ca026fb8"
+  },
+  "hook.precompact.auto.defer": {
+    "exit_code": 2,
+    "group": "HOOK_LIFECYCLE",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "hook.precompact.auto.done": {
+    "exit_code": 0,
+    "group": "HOOK_LIFECYCLE",
+    "stdout_sha256": "dfc32f229551c6f623f40c934c2d150d7cb3375cd685c3ed18a10417c763f22e"
+  },
+  "hook.prompt.off.4m": {
+    "exit_code": 0,
+    "group": "HOOK_HOT",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "hook.sessionstart.compact.paste": {
+    "exit_code": 0,
+    "group": "HOOK_LIFECYCLE",
+    "stdout_sha256": "4a2c0abb977f63094e42bfa8513bc9f8db0c58de36871967a9b0d9f04e7f731b"
+  },
+  "init.fresh-repo": {
+    "exit_code": 0,
+    "group": "INIT",
+    "stdout_sha256": "7a24b2e6b02b2f1055013a206db750a010fd7b4fdc849d1d1cb59a0ef329b136"
+  },
+  "suite.check-handoff-guard": {
+    "exit_code": 0,
+    "group": "SUITE",
+    "stdout_sha256": "0db7a841259c30f58c2144123776724ef9bcbf4a406d209acb6b65767f75895b"
+  }
+}
